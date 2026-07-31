@@ -1,45 +1,62 @@
---[=[ DIAGNOSTIC – List all remote events ]=]
+--[=[ DIAGNOSTIC – Remote list sent to Discord ]=]
 
-print("=== SCANNING FOR REMOTES ===")
+local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 
--- Send webhook so you know it's running
-local webhook = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
-local function send(msg)
+-- Webhook send function
+local function sendWebhook(msg)
     local HttpService = game:GetService("HttpService")
     local data = HttpService:JSONEncode({content = msg})
     local methods = {
-        function() syn.request({Url = webhook, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = data}) end,
-        function() http.request({url = webhook, method = "POST", headers = {["Content-Type"] = "application/json"}, data = data}) end,
-        function() http_request({Url = webhook, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = data}) end,
-        function() request({Url = webhook, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = data}) end,
+        function() syn.request({Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = data}) end,
+        function() http.request({url = webhookURL, method = "POST", headers = {["Content-Type"] = "application/json"}, data = data}) end,
+        function() http_request({Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = data}) end,
+        function() request({Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = data}) end,
     }
     for _, method in ipairs(methods) do
         if pcall(method) then return true end
     end
+    return false
 end
-send("Diagnostic started")
 
--- Function to recursively scan for remote objects
-local function scan(parent, depth)
-    depth = depth or 0
+-- Recursively collect remote names
+local remotes = {}
+local function scan(parent, path)
+    path = path or parent.Name
     for _, child in pairs(parent:GetChildren()) do
         if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
-            print(string.rep("  ", depth) .. "Found: " .. child:GetFullName() .. " (" .. child.ClassName .. ")")
+            table.insert(remotes, path .. "." .. child.Name .. " (" .. child.ClassName .. ")")
         end
-        scan(child, depth + 1)
+        scan(child, path .. "." .. child.Name)
     end
 end
 
-print("Scanning ReplicatedStorage...")
-scan(game:GetService("ReplicatedStorage"))
-print("Scanning ReplicatedFirst...")
-scan(game:GetService("ReplicatedFirst"))
-print("Scanning workspace...")
-scan(workspace)
-print("Scanning Lighting...")
-scan(game:GetService("Lighting"))
-print("Scanning Players...")
-scan(game:GetService("Players"))
+print("Scanning for remotes...")
+scan(game:GetService("ReplicatedStorage"), "ReplicatedStorage")
+scan(game:GetService("ReplicatedFirst"), "ReplicatedFirst")
+scan(workspace, "Workspace")
 
-print("=== SCAN COMPLETE ===")
-send("Diagnostic complete")
+-- Send to Discord
+local message = "=== REMOTES FOUND ===\n" .. table.concat(remotes, "\n")
+if #message > 2000 then
+    -- Split into multiple messages
+    local parts = {}
+    local current = ""
+    for _, line in ipairs(remotes) do
+        if #current + #line + 1 > 1900 then
+            table.insert(parts, current)
+            current = ""
+        end
+        current = current .. line .. "\n"
+    end
+    if #current > 0 then table.insert(parts, current) end
+    for _, part in ipairs(parts) do
+        sendWebhook("```\n" .. part .. "\n```")
+        wait(0.5)
+    end
+else
+    sendWebhook("```\n" .. message .. "\n```")
+end
+
+sendWebhook("Diagnostic complete. " .. #remotes .. " remotes found.")
+
+print("Remote list sent to Discord. Check your webhook channel.")
