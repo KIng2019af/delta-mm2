@@ -1,9 +1,8 @@
---[=[ DIAGNOSTIC – Remote list sent to Discord ]=]
+--[=[ DIAGNOSTIC V2 – Remote finder with chunked webhook ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 
--- Webhook send function
-local function sendWebhook(msg)
+local function send(msg)
     local HttpService = game:GetService("HttpService")
     local data = HttpService:JSONEncode({content = msg})
     local methods = {
@@ -18,9 +17,20 @@ local function sendWebhook(msg)
     return false
 end
 
--- Recursively collect remote names
+-- Collect all remotes from all services
 local remotes = {}
+local services = {
+    game:GetService("ReplicatedStorage"),
+    game:GetService("ReplicatedFirst"),
+    game:GetService("ServerScriptService"),
+    game:GetService("ServerStorage"),
+    workspace,
+    game:GetService("Lighting"),
+    game:GetService("Players"),
+}
+
 local function scan(parent, path)
+    if not parent then return end
     path = path or parent.Name
     for _, child in pairs(parent:GetChildren()) do
         if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
@@ -30,33 +40,34 @@ local function scan(parent, path)
     end
 end
 
-print("Scanning for remotes...")
-scan(game:GetService("ReplicatedStorage"), "ReplicatedStorage")
-scan(game:GetService("ReplicatedFirst"), "ReplicatedFirst")
-scan(workspace, "Workspace")
-
--- Send to Discord
-local message = "=== REMOTES FOUND ===\n" .. table.concat(remotes, "\n")
-if #message > 2000 then
-    -- Split into multiple messages
-    local parts = {}
-    local current = ""
-    for _, line in ipairs(remotes) do
-        if #current + #line + 1 > 1900 then
-            table.insert(parts, current)
-            current = ""
-        end
-        current = current .. line .. "\n"
+for _, svc in ipairs(services) do
+    if svc then
+        scan(svc, svc.Name)
     end
-    if #current > 0 then table.insert(parts, current) end
-    for _, part in ipairs(parts) do
-        sendWebhook("```\n" .. part .. "\n```")
-        wait(0.5)
-    end
-else
-    sendWebhook("```\n" .. message .. "\n```")
 end
 
-sendWebhook("Diagnostic complete. " .. #remotes .. " remotes found.")
+-- Send a message first to confirm webhook works
+send("Diagnostic V2 started. " .. #remotes .. " remotes found.")
 
-print("Remote list sent to Discord. Check your webhook channel.")
+if #remotes == 0 then
+    send("No remote events found in any service.")
+else
+    -- Send in chunks of 10 lines per message to avoid length limits
+    local chunk = {}
+    local count = 0
+    for i, remote in ipairs(remotes) do
+        table.insert(chunk, remote)
+        count = count + 1
+        if count % 10 == 0 then
+            send("```\n" .. table.concat(chunk, "\n") .. "\n```")
+            chunk = {}
+            wait(0.2)
+        end
+    end
+    if #chunk > 0 then
+        send("```\n" .. table.concat(chunk, "\n") .. "\n```")
+    end
+    send("Total " .. #remotes .. " remotes sent.")
+end
+
+send("Diagnostic V2 complete.")
